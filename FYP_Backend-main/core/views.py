@@ -13,6 +13,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework_simplejwt.tokens import RefreshToken
+import math
 import qrcode
 import io
 import base64
@@ -21,9 +22,12 @@ from .serializers import (
     StudentRegistrationSerializer,
     TeacherRegistrationSerializer,
     ManagementRegistrationSerializer,
+    EventParticipantRegistrationSerializer,
     LoginSerializer,
     StudentSerializer,
+    StudentDetailSerializer,
     TeacherSerializer,
+    TeacherDetailSerializer,
     ManagementSerializer,
     CourseSerializer,
     ClassSerializer,
@@ -33,11 +37,16 @@ from .serializers import (
     AttendanceSessionSerializer,
     AttendanceRecordSerializer,
     RFIDScanSerializer,
-    QRScanSerializer
+    QRScanSerializer,
+    EventSerializer,
+    EventParticipantSerializer,
+    EventRegistrationSerializer,
+    EventAttendanceSerializer,
 )
 from .models import (
     Student, Teacher, Management, StudentCourse, TaughtCourse, Course, Class,
-    UpdateAttendanceRequest, AttendanceSession, AttendanceRecord
+    UpdateAttendanceRequest, AttendanceSession, AttendanceRecord,
+    Event, EventParticipant, EventRegistration, EventAttendance,
 )
 
 
@@ -52,6 +61,7 @@ class StudentViewSet(viewsets.ModelViewSet):
     - PUT /students/{id}/ - Update a student
     - PATCH /students/{id}/ - Partial update a student
     - DELETE /students/{id}/ - Delete a student
+    - GET /students/me/ - Return the authenticated student's full profile + courses
     """
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
@@ -71,6 +81,16 @@ class StudentViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(section=section)
         return queryset
 
+    @action(detail=False, methods=['get'], url_path='me')
+    def me(self, request):
+        """Return the authenticated student's full profile including course attendance stats."""
+        try:
+            student = Student.objects.get(user=request.user)
+        except Student.DoesNotExist:
+            return Response({'error': 'Student profile not found'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = StudentDetailSerializer(student)
+        return Response(serializer.data)
+
 
 class TeacherViewSet(viewsets.ModelViewSet):
     """
@@ -81,10 +101,21 @@ class TeacherViewSet(viewsets.ModelViewSet):
     - PUT /teachers/{id}/ - Update a teacher
     - PATCH /teachers/{id}/ - Partial update a teacher
     - DELETE /teachers/{id}/ - Delete a teacher
+    - GET /teachers/me/ - Return the authenticated teacher's full profile + taught courses
     """
     queryset = Teacher.objects.all()
     serializer_class = TeacherSerializer
     permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=['get'], url_path='me')
+    def me(self, request):
+        """Return the authenticated teacher's full profile including taught courses."""
+        try:
+            teacher = Teacher.objects.get(user=request.user)
+        except Teacher.DoesNotExist:
+            return Response({'error': 'Teacher profile not found'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = TeacherDetailSerializer(teacher)
+        return Response(serializer.data)
 
 
 class ManagementViewSet(viewsets.ModelViewSet):
@@ -96,10 +127,21 @@ class ManagementViewSet(viewsets.ModelViewSet):
     - PUT /management/{id}/ - Update a management user
     - PATCH /management/{id}/ - Partial update a management user
     - DELETE /management/{id}/ - Delete a management user
+    - GET /management/me/ - Return the authenticated management user's profile
     """
     queryset = Management.objects.all()
     serializer_class = ManagementSerializer
     permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=['get'], url_path='me')
+    def me(self, request):
+        """Return the authenticated management user's profile."""
+        try:
+            management = Management.objects.get(user=request.user)
+        except Management.DoesNotExist:
+            return Response({'error': 'Management profile not found'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ManagementSerializer(management)
+        return Response(serializer.data)
 
 
 class CourseViewSet(viewsets.ModelViewSet):
@@ -572,26 +614,46 @@ class RFIDScanView(APIView):
 
 class QRScanView(APIView):
     """
-    API endpoint for QR code scanning
+    API endpoint for QR code scanning.
     POST /attendance/qr-scan/
+
+    Supports two modes:
+    - require_rfid=True (default): marks present only after BOTH RFID + QR scans
+    - require_rfid=False: marks present on QR scan alone (QR-only mode)
+
+    Optionally validates the student's geolocation against the session's stored location.
     """
     permission_classes = [IsAuthenticated]
 
+    @staticmethod
+    def _haversine_distance(lat1, lng1, lat2, lng2):
+        """Return distance in meters between two lat/lng points."""
+        R = 6371000
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlambda = math.radians(lng2 - lng1)
+        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
     def _mark_attendance_if_complete(self, record, session):
         """
-        Helper method to mark attendance and update StudentCourse if both scans are complete.
+        Mark attendance and update StudentCourse when the required scans are done.
+        In QR-only mode (require_rfid=False) the QR scan alone is sufficient.
         """
-        if record.rfid_scanned and record.qr_scanned:
+        needs_rfid = session.require_rfid
+        ready = (record.rfid_scanned and record.qr_scanned) if needs_rfid else record.qr_scanned
+
+        if ready:
             record.is_present = True
             record.marked_present_at = timezone.now()
-            
+
             # Update StudentCourse attendance
             student_course, _ = StudentCourse.objects.get_or_create(
                 student=record.student,
                 course=session.course,
                 teacher=session.teacher
             )
-            
+
             # Append the session date to classes_attended
             session_date = session.started_at.strftime('%Y-%m-%d')
             if student_course.classes_attended:
@@ -607,6 +669,8 @@ class QRScanView(APIView):
 
         qr_token = serializer.validated_data['qr_token']
         student_id = serializer.validated_data['student_id']
+        student_lat = serializer.validated_data.get('latitude')
+        student_lng = serializer.validated_data.get('longitude')
 
         # Get student
         try:
@@ -640,6 +704,19 @@ class QRScanView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Optional geolocation validation
+        if (session.latitude is not None and session.longitude is not None
+                and student_lat is not None and student_lng is not None):
+            radius = session.radius_meters or 50
+            distance = self._haversine_distance(
+                student_lat, student_lng, session.latitude, session.longitude
+            )
+            if distance > radius:
+                return Response(
+                    {'error': f'You are outside the allowed classroom area ({distance:.0f}m from centre, limit {radius}m)'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
         # Get or create attendance record
         record, created = AttendanceRecord.objects.get_or_create(
             session=session,
@@ -650,7 +727,7 @@ class QRScanView(APIView):
         record.qr_scanned = True
         record.qr_scanned_at = timezone.now()
 
-        # Check if both RFID and QR are scanned
+        # Check if required scans are complete
         self._mark_attendance_if_complete(record, session)
 
         record.save()
@@ -661,7 +738,7 @@ class QRScanView(APIView):
             'rfid_scanned': record.rfid_scanned,
             'qr_scanned': True,
             'is_present': record.is_present,
-            'needs_rfid': not record.rfid_scanned
+            'needs_rfid': (not record.rfid_scanned) and session.require_rfid,
         }, status=status.HTTP_200_OK)
 
 
@@ -710,7 +787,8 @@ class TeacherRegistrationView(generics.CreateAPIView):
 
 class ManagementRegistrationView(generics.CreateAPIView):
     """
-    API endpoint for management registration
+    API endpoint for management registration.
+    Use the `role` field to create either a university_admin or an event_admin.
     """
     serializer_class = ManagementRegistrationSerializer
     permission_classes = [AllowAny]
@@ -723,9 +801,163 @@ class ManagementRegistrationView(generics.CreateAPIView):
                 'message': 'Management registered successfully',
                 'management_id': management.Management_id,
                 'email': management.email,
-                'management_name': management.Management_name
+                'management_name': management.Management_name,
+                'role': management.role,
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class EventParticipantRegistrationView(generics.CreateAPIView):
+    """
+    API endpoint for event-participant registration.
+    POST /api/auth/register/participant/
+    """
+    serializer_class = EventParticipantRegistrationSerializer
+    permission_classes = [AllowAny]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            participant = serializer.save()
+            return Response({
+                'message': 'Participant registered successfully',
+                'participant_id': participant.participant_id,
+                'email': participant.email,
+                'name': participant.name,
+            }, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ParticipantLoginView(APIView):
+    """
+    API endpoint for event-participant login.
+    POST /api/auth/login/participant/
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = LoginSerializer(data=request.data)
+        if serializer.is_valid():
+            email = serializer.validated_data['email']
+            password = serializer.validated_data['password']
+            user = authenticate(username=email, password=password)
+            if user is not None:
+                try:
+                    participant = EventParticipant.objects.get(user=user)
+                    refresh = RefreshToken.for_user(user)
+                    return Response({
+                        'message': 'Login successful',
+                        'refresh': str(refresh),
+                        'access': str(refresh.access_token),
+                        'user_type': 'participant',
+                        'participant_id': participant.participant_id,
+                        'name': participant.name,
+                        'email': participant.email,
+                    }, status=status.HTTP_200_OK)
+                except EventParticipant.DoesNotExist:
+                    return Response({'error': 'Participant profile not found for this user'},
+                                    status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'Invalid email or password'}, status=status.HTTP_401_UNAUTHORIZED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+# ============ Event ViewSets ============
+
+class EventViewSet(viewsets.ModelViewSet):
+    """
+    CRUD for events.  Event admins (Management with role='event_admin') manage events.
+    - GET  /events/                  - list all events
+    - POST /events/                  - create event
+    - GET  /events/{id}/             - retrieve event
+    - PUT  /events/{id}/             - update event
+    - DELETE /events/{id}/           - delete event
+    - GET  /events/{id}/registrations/ - list registrations for this event
+    - GET  /events/{id}/attendance/    - list attendance for this event
+    - POST /events/{id}/mark-attendance/ - mark a participant present
+    """
+    queryset = Event.objects.all()
+    serializer_class = EventSerializer
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=True, methods=['get'], url_path='registrations')
+    def registrations(self, request, pk=None):
+        event = self.get_object()
+        regs = EventRegistration.objects.filter(event=event).select_related('participant')
+        serializer = EventRegistrationSerializer(regs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'], url_path='attendance')
+    def attendance(self, request, pk=None):
+        event = self.get_object()
+        records = EventAttendance.objects.filter(event=event).select_related('participant')
+        serializer = EventAttendanceSerializer(records, many=True)
+        return Response({
+            'records': serializer.data,
+            'statistics': {
+                'registered': event.registrations.filter(status='registered').count(),
+                'present': records.count(),
+            }
+        })
+
+    @action(detail=True, methods=['post'], url_path='mark-attendance')
+    def mark_attendance(self, request, pk=None):
+        """Mark a participant as present at this event."""
+        event = self.get_object()
+        participant_id = request.data.get('participant_id')
+        if not participant_id:
+            return Response({'error': 'participant_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            participant = EventParticipant.objects.get(participant_id=participant_id)
+        except EventParticipant.DoesNotExist:
+            return Response({'error': 'Participant not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        att, created = EventAttendance.objects.get_or_create(event=event, participant=participant,
+                                                              defaults={'status': 'present'})
+        if not created:
+            att.status = 'present'
+            att.save()
+
+        return Response({
+            'message': 'Attendance marked',
+            'participant': participant.name,
+            'event': event.title,
+        }, status=status.HTTP_200_OK)
+
+
+class EventParticipantViewSet(viewsets.ModelViewSet):
+    """CRUD for event participants."""
+    queryset = EventParticipant.objects.all()
+    serializer_class = EventParticipantSerializer
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=['get'], url_path='me')
+    def me(self, request):
+        try:
+            participant = EventParticipant.objects.get(user=request.user)
+        except EventParticipant.DoesNotExist:
+            return Response({'error': 'Participant profile not found'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = EventParticipantSerializer(participant)
+        return Response(serializer.data)
+
+
+class EventRegistrationViewSet(viewsets.ModelViewSet):
+    """
+    Handles event registrations.
+    POST /event-registrations/ with {event, participant} to register.
+    """
+    queryset = EventRegistration.objects.all()
+    serializer_class = EventRegistrationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = self.queryset.all()
+        event_id = self.request.query_params.get('event')
+        participant_id = self.request.query_params.get('participant')
+        if event_id:
+            qs = qs.filter(event_id=event_id)
+        if participant_id:
+            qs = qs.filter(participant_id=participant_id)
+        return qs
 
 
 class StudentLoginView(APIView):

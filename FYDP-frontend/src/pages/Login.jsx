@@ -1,8 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-
-import teacherData from "../data/TeacherData";
-import adminData from "../data/AdminData";
+import { loginStudent, loginTeacher, loginAdmin, loginParticipant } from "../api/auth";
 
 const Login = () => {
   const [data, setData] = useState({
@@ -10,119 +8,48 @@ const Login = () => {
     password: "",
     role: "student",
   });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const navigate = useNavigate();
 
   const handleOnChange = (e) => {
     const { name, value } = e.target;
     setData((prev) => ({ ...prev, [name]: value }));
+    setError("");
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    setLoading(true);
+    setError("");
 
-    /* =========================
-       STUDENT LOGIN
-    ========================= */
-    if (data.role === "student") {
-      const students = JSON.parse(localStorage.getItem("students")) || [];
-
-      const student = students.find(
-        (s) =>
-          (s.email === data.email || s.id === data.email) &&
-          s.password === data.password
-      );
-
-      if (student) {
-        localStorage.setItem(
-          "currentUser",
-          JSON.stringify({
-            role: "student",
-            id: student.id,
-            name: student.name,
-            email: student.email,
-          })
-        );
-
+    try {
+      if (data.role === "student") {
+        await loginStudent(data.email, data.password);
         navigate("/student");
-        return;
-      }
-
-      alert("Invalid student credentials");
-      return;
-    }
-
-    /* =========================
-       TEACHER LOGIN
-    ========================= */
-    if (data.role === "teacher") {
-      const teacher = teacherData.find(
-        (t) =>
-          t.profile.email === data.email &&
-          t.profile.password === data.password
-      );
-
-      if (teacher) {
-        localStorage.setItem(
-          "currentUser",
-          JSON.stringify({
-            role: "teacher",
-            id: teacher.profile.teacherId,
-            name: teacher.profile.name,
-            email: teacher.profile.email,
-          })
-        );
-
-        // Store teacher in expected format for dashboard
-        localStorage.setItem(
-          "teachers",
-          JSON.stringify([
-            {
-              id: teacher.profile.teacherId,
-              name: teacher.profile.name,
-              dept: teacher.profile.department,
-              courses: teacher.profile.coursesTeaching.join(","),
-            },
-          ])
-        );
-
+      } else if (data.role === "teacher") {
+        await loginTeacher(data.email, data.password);
         navigate("/teacher");
-        return;
+      } else if (data.role === "admin") {
+        const result = await loginAdmin(data.email, data.password);
+        // Route to event admin dashboard if role is event_admin
+        navigate(result.role === "event_admin" ? "/eventadmin" : "/admin");
+      } else if (data.role === "participant") {
+        await loginParticipant(data.email, data.password);
+        navigate("/events");
+      } else {
+        setError("Unsupported role selected.");
       }
-
-      alert("Invalid teacher credentials");
-      return;
+    } catch (err) {
+      const msg =
+        err.response?.data?.error ||
+        err.response?.data?.detail ||
+        "Invalid credentials. Please try again.";
+      setError(msg);
+    } finally {
+      setLoading(false);
     }
-
-    /* =========================
-       ADMIN LOGIN
-    ========================= */
-    if (data.role === "admin") {
-      const admin = adminData.profile;
-
-      if (
-        admin.email === data.email &&
-        admin.password === data.password
-      ) {
-        localStorage.setItem(
-          "currentUser",
-          JSON.stringify({
-            role: "admin",
-            id: admin.adminId,
-            name: admin.name,
-            email: admin.email,
-            department: admin.department,
-          })
-        );
-
-        navigate("/admin");
-        return;
-      }
-
-      alert("Invalid admin credentials");
-      return;
-    }
-
   };
 
   return (
@@ -131,6 +58,12 @@ const Login = () => {
         <div className="text-red-900 text-center mb-6 text-4xl font-semibold">
           Login
         </div>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+            {error}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit}>
           <label className="block text-red-800 text-sm">Email</label>
@@ -162,17 +95,20 @@ const Login = () => {
           >
             <option value="student">Student</option>
             <option value="teacher">Teacher</option>
-            <option value="admin">Admin</option>
-            <option value="advisor">Advisor</option>
+            <option value="admin">Admin / Event Admin</option>
+            <option value="participant">Event Participant</option>
           </select>
 
-          <button className="w-full bg-red-900 text-white py-2 rounded">
-            Login
+          <button
+            className="w-full bg-red-900 text-white py-2 rounded disabled:opacity-50"
+            disabled={loading}
+          >
+            {loading ? "Logging in…" : "Login"}
           </button>
 
           <div className="text-center mt-3">
-            <Link to="/forgot-password" className="text-red-900 text-sm">
-              Forgot Password?
+            <Link to="/signup" className="text-red-900 text-sm">
+              Don&apos;t have an account? Sign up
             </Link>
           </div>
         </form>
@@ -182,3 +118,4 @@ const Login = () => {
 };
 
 export default Login;
+

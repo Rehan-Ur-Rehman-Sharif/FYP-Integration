@@ -4,9 +4,11 @@ from .views import (
     StudentRegistrationView,
     TeacherRegistrationView,
     ManagementRegistrationView,
+    EventParticipantRegistrationView,
     StudentLoginView,
     TeacherLoginView,
     ManagementLoginView,
+    ParticipantLoginView,
     student_login_page,
     teacher_login_page,
     management_login_page,
@@ -28,7 +30,10 @@ from .views import (
     AttendanceSessionViewSet,
     AttendanceRecordViewSet,
     RFIDScanView,
-    QRScanView
+    QRScanView,
+    EventViewSet,
+    EventParticipantViewSet,
+    EventRegistrationViewSet,
 )
 
 # Create a router for CRUD ViewSets
@@ -43,6 +48,9 @@ router.register(r'student-courses', StudentCourseViewSet, basename='studentcours
 router.register(r'update-attendance-requests', UpdateAttendanceRequestViewSet, basename='updateattendancerequest')
 router.register(r'attendance-sessions', AttendanceSessionViewSet, basename='attendancesession')
 router.register(r'attendance-records', AttendanceRecordViewSet, basename='attendancerecord')
+router.register(r'events', EventViewSet, basename='event')
+router.register(r'event-participants', EventParticipantViewSet, basename='eventparticipant')
+router.register(r'event-registrations', EventRegistrationViewSet, basename='eventregistration')
 
 urlpatterns = [
     # CRUD API endpoints (from router)
@@ -64,11 +72,13 @@ urlpatterns = [
     path('auth/register/student/', StudentRegistrationView.as_view(), name='student-register'),
     path('auth/register/teacher/', TeacherRegistrationView.as_view(), name='teacher-register'),
     path('auth/register/management/', ManagementRegistrationView.as_view(), name='management-register'),
+    path('auth/register/participant/', EventParticipantRegistrationView.as_view(), name='participant-register'),
     
     # API Login endpoints
     path('auth/login/student/', StudentLoginView.as_view(), name='student-login'),
     path('auth/login/teacher/', TeacherLoginView.as_view(), name='teacher-login'),
     path('auth/login/management/', ManagementLoginView.as_view(), name='management-login'),
+    path('auth/login/participant/', ParticipantLoginView.as_view(), name='participant-login'),
     
     # Template-based login pages
     path('login/student/', student_login_page, name='student-login-page'),

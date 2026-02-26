@@ -1401,3 +1401,220 @@ class AttendanceSessionStatisticsTestCase(APITestCase):
         self.assertEqual(response.data['statistics']['qr_only'], 1)
 
 
+
+# ============ New Integration Tests ============
+
+from .models import Event, EventParticipant, EventRegistration, EventAttendance
+import datetime
+
+
+class MeEndpointTestCase(APITestCase):
+    """Test the /me endpoints for student, teacher, and management."""
+
+    def setUp(self):
+        # Student
+        self.student_user = User.objects.create_user(
+            username='me_student@test.com', email='me_student@test.com', password='TestPass123!')
+        self.student = Student.objects.create(
+            user=self.student_user, student_name='Me Student',
+            email='me_student@test.com', rfid='RFIDME1', year=2, dept='CS', section='A')
+        # Teacher
+        self.teacher_user = User.objects.create_user(
+            username='me_teacher@test.com', email='me_teacher@test.com', password='TestPass123!')
+        self.teacher = Teacher.objects.create(
+            user=self.teacher_user, teacher_name='Me Teacher',
+            email='me_teacher@test.com', rfid='RFIDME2', department='Computer Science')
+        # Management
+        self.mgmt_user = User.objects.create_user(
+            username='me_mgmt@test.com', email='me_mgmt@test.com', password='TestPass123!')
+        self.management = Management.objects.create(
+            user=self.mgmt_user, Management_name='Me Admin',
+            email='me_mgmt@test.com', department='CS', role='university_admin')
+
+    def test_student_me(self):
+        self.client.force_authenticate(user=self.student_user)
+        response = self.client.get(reverse('student-me'))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['student_name'], 'Me Student')
+        self.assertIn('courses', response.data)
+
+    def test_teacher_me(self):
+        self.client.force_authenticate(user=self.teacher_user)
+        response = self.client.get(reverse('teacher-me'))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['teacher_name'], 'Me Teacher')
+        self.assertIn('taught_courses', response.data)
+
+    def test_management_me(self):
+        self.client.force_authenticate(user=self.mgmt_user)
+        response = self.client.get(reverse('management-me'))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['Management_name'], 'Me Admin')
+        self.assertEqual(response.data['role'], 'university_admin')
+
+    def test_student_me_unauthenticated(self):
+        response = self.client.get(reverse('student-me'))
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class QROnlyAttendanceTestCase(APITestCase):
+    """Test QR-only mode (require_rfid=False)."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='qr_student@test.com', email='qr_student@test.com', password='TestPass123!')
+        self.teacher = Teacher.objects.create(
+            teacher_name='QR Teacher', email='qr_teacher@test.com', rfid='RFIDQR1')
+        self.course = Course.objects.create(course_name='QR Course')
+        self.student = Student.objects.create(
+            user=self.user, student_name='QR Student',
+            email='qr_student@test.com', rfid='RFIDQR_S1',
+            year=1, dept='CS', section='A')
+        self.session = AttendanceSession.objects.create(
+            teacher=self.teacher, course=self.course,
+            section='A', year=1, qr_code_token='qr_only_token',
+            status='active', require_rfid=False)
+        self.client.force_authenticate(user=self.user)
+
+    def test_qr_only_marks_present(self):
+        """QR scan alone should mark present when require_rfid=False."""
+        data = {'qr_token': 'qr_only_token', 'student_id': self.student.student_id}
+        response = self.client.post(reverse('qr-scan'), data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['is_present'])
+        record = AttendanceRecord.objects.get(session=self.session, student=self.student)
+        self.assertTrue(record.is_present)
+
+
+class EventParticipantRegistrationTestCase(APITestCase):
+    """Test EventParticipant registration and login."""
+
+    def setUp(self):
+        self.register_url = reverse('participant-register')
+        self.login_url = reverse('participant-login')
+        self.valid_data = {
+            'email': 'participant@test.com',
+            'password': 'TestPass123!',
+            'password2': 'TestPass123!',
+            'name': 'Test Participant',
+            'phone': '0300-0000000',
+        }
+
+    def test_participant_registration_success(self):
+        response = self.client.post(self.register_url, self.valid_data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn('participant_id', response.data)
+        self.assertEqual(response.data['email'], 'participant@test.com')
+
+    def test_participant_login_success(self):
+        self.client.post(self.register_url, self.valid_data, format='json')
+        response = self.client.post(self.login_url, {
+            'email': 'participant@test.com', 'password': 'TestPass123!'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('access', response.data)
+        self.assertEqual(response.data['user_type'], 'participant')
+
+    def test_participant_login_wrong_password(self):
+        self.client.post(self.register_url, self.valid_data, format='json')
+        response = self.client.post(self.login_url, {
+            'email': 'participant@test.com', 'password': 'WrongPass!'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class EventManagementTestCase(APITestCase):
+    """Test event CRUD and attendance marking."""
+
+    def setUp(self):
+        self.admin_user = User.objects.create_user(
+            username='event_admin@test.com', email='event_admin@test.com', password='TestPass123!')
+        self.admin = Management.objects.create(
+            user=self.admin_user, Management_name='Event Admin',
+            email='event_admin@test.com', role='event_admin')
+        self.client.force_authenticate(user=self.admin_user)
+
+        # Create a participant
+        self.p_user = User.objects.create_user(
+            username='p@test.com', email='p@test.com', password='TestPass123!')
+        self.participant = EventParticipant.objects.create(
+            user=self.p_user, name='Alice', email='p@test.com')
+
+    def test_create_event(self):
+        data = {
+            'title': 'Tech Fest', 'venue': 'Main Hall',
+            'date': '2026-06-01', 'description': 'Annual tech fest.',
+        }
+        response = self.client.post(reverse('event-list'), data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['title'], 'Tech Fest')
+
+    def test_list_events(self):
+        Event.objects.create(title='Fest', date='2026-06-01', created_by=self.admin)
+        response = self.client.get(reverse('event-list'))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(response.data), 1)
+
+    def test_mark_event_attendance(self):
+        event = Event.objects.create(title='Fest', date='2026-06-01', created_by=self.admin)
+        EventRegistration.objects.create(event=event, participant=self.participant)
+        url = reverse('event-mark-attendance', args=[event.event_id])
+        response = self.client.post(url, {'participant_id': self.participant.participant_id}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(EventAttendance.objects.filter(event=event, participant=self.participant).exists())
+
+    def test_event_attendance_statistics(self):
+        event = Event.objects.create(title='Fest', date='2026-06-01', created_by=self.admin)
+        EventRegistration.objects.create(event=event, participant=self.participant)
+        EventAttendance.objects.create(event=event, participant=self.participant, status='present')
+        url = reverse('event-attendance', args=[event.event_id])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['statistics']['present'], 1)
+
+
+class ManagementRoleTestCase(APITestCase):
+    """Test Management role field (university_admin vs event_admin)."""
+
+    def test_register_event_admin(self):
+        data = {
+            'email': 'eventadmin@test.com',
+            'password': 'TestPass123!',
+            'password2': 'TestPass123!',
+            'Management_name': 'Event Manager',
+            'role': 'event_admin',
+        }
+        response = self.client.post(reverse('management-register'), data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['role'], 'event_admin')
+
+    def test_register_university_admin_default(self):
+        data = {
+            'email': 'uniadmin@test.com',
+            'password': 'TestPass123!',
+            'password2': 'TestPass123!',
+            'Management_name': 'Uni Admin',
+        }
+        response = self.client.post(reverse('management-register'), data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['role'], 'university_admin')
+
+
+class CourseCodeTestCase(APITestCase):
+    """Test course_code field on Course model."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='cc_user@test.com', email='cc_user@test.com', password='TestPass123!')
+        self.client.force_authenticate(user=self.user)
+
+    def test_create_course_with_code(self):
+        data = {'course_name': 'Database Systems', 'course_code': 'CS301'}
+        response = self.client.post(reverse('course-list'), data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['course_code'], 'CS301')
+
+    def test_list_courses_returns_code(self):
+        Course.objects.create(course_name='Algo', course_code='CS401')
+        response = self.client.get(reverse('course-list'))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        codes = [c['course_code'] for c in response.data]
+        self.assertIn('CS401', codes)
