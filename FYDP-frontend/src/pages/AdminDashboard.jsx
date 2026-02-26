@@ -1,135 +1,94 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import adminData from "../data/AdminData";
 import AdminHeader from "../components/admin/AdminHeader";
 import AttendanceRequests from "../components/admin/AttendenceRequest";
 import ManageStudents from "../components/admin/ManageStudents";
 import ManageTeachers from "../components/admin/ManageTeacher";
 import ViewAttendance from "../components/admin/ViewAttendence";
 import "../styles/admin.css";
-import { getAttendanceRequests } from "../data/AttendenceRequest";
+import {
+  listStudents,
+  listTeachers,
+  listCourses,
+  listAttendanceRequests,
+} from "../api/admin";
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const [tab, setTab] = useState("requests");
   const [requests, setRequests] = useState([]);
+  const [students, setStudents] = useState([]);
+  const [teachers, setTeachers] = useState([]);
+  const [courses, setCourses] = useState([]);
+  const [adminProfile, setAdminProfile] = useState(null);
 
-  // ✅ AUTHENTICATION (SAME STYLE AS STUDENT)
-  const currentUserStr = localStorage.getItem("currentUser");
-  let adminProfile = null;
-
-  if (currentUserStr) {
+  // Authentication check
+  useEffect(() => {
+    const currentUserStr = localStorage.getItem("currentUser");
+    if (!currentUserStr) { navigate("/login"); return; }
     try {
       const currentUser = JSON.parse(currentUserStr);
-      if (
-        currentUser.role === "admin" &&
-        currentUser.email === adminData.profile.email
-      ) {
-        adminProfile = adminData.profile;
-      }
-    } catch {}
-  }
-
-  // ❌ Not admin → kick out
-  useEffect(() => {
-    if (!adminProfile) navigate("/login");
-  }, [adminProfile, navigate]);
-
-  // ✅ Load requests dynamically
-  useEffect(() => {
-    const data = getAttendanceRequests();
-    setRequests(data);
-  }, [tab]);
-
-  /* ---------------- REGISTER STUDENT ---------------- */
-  const handleRegisterStudent = (student) => {
-    const stored = JSON.parse(localStorage.getItem("students")) || [];
-
-    const exists = stored.find(s => s.id === student.id);
-    if (exists) {
-      alert("Student already exists");
-      return;
-    }
-
-    const newStudent = {
-      ...student,
-      password: student.id
-    };
-
-    stored.push(newStudent);
-    localStorage.setItem("students", JSON.stringify(stored));
-
-    alert(
-      `Student Registered!\n\nLogin:\nID: ${newStudent.id}\nPassword: ${newStudent.password}`
-    );
-  };
-
-  /* ---------------- REGISTER TEACHER ---------------- */
-  const handleRegisterTeacher = (teacher) => {
-    let storedTeachers = [];
-
-    try {
-      storedTeachers = JSON.parse(localStorage.getItem("teachers")) || [];
+      if (currentUser.role !== "admin") { navigate("/login"); return; }
+      setAdminProfile(currentUser);
     } catch {
-      storedTeachers = [];
+      navigate("/login");
     }
+  }, [navigate]);
 
-    if (!Array.isArray(storedTeachers)) storedTeachers = [];
-
-    const exists = storedTeachers.find(t => t.id === teacher.id);
-    if (exists) {
-      alert("Teacher ID already exists");
-      return;
+  // Load data from API whenever tab changes
+  useEffect(() => {
+    if (!adminProfile) return;
+    if (tab === "requests") {
+      listAttendanceRequests({ status: "pending" })
+        .then(setRequests)
+        .catch(() => setRequests([]));
+    } else if (tab === "students") {
+      listStudents().then(setStudents).catch(() => setStudents([]));
+    } else if (tab === "teachers") {
+      listTeachers().then(setTeachers).catch(() => setTeachers([]));
+    } else if (tab === "view") {
+      listStudents().then(setStudents).catch(() => setStudents([]));
+      listCourses().then(setCourses).catch(() => setCourses([]));
     }
+  }, [tab, adminProfile]);
 
-    const newTeacher = {
-      ...teacher,
-      password: teacher.id,
-      dept: adminProfile.department // ✅ same department as admin
-    };
-
-    storedTeachers.push(newTeacher);
-    localStorage.setItem("teachers", JSON.stringify(storedTeachers));
-
-    alert(
-      `Teacher registered!\n\nLogin:\nID: ${newTeacher.id}\nPassword: ${newTeacher.password}`
-    );
-  };
+  if (!adminProfile) return null;
 
   return (
     <div className="admin-page">
       <AdminHeader tab={tab} setTab={setTab} />
 
       {tab === "requests" && (
-        <AttendanceRequests requests={requests} />
+        <AttendanceRequests requests={requests} onRefresh={() =>
+          listAttendanceRequests({ status: "pending" }).then(setRequests).catch(() => {})} />
       )}
 
       {tab === "students" && (
         <ManageStudents
-          students={adminData.students}
-          years={adminData.years}
-          programs={adminData.programs}
-          onRegister={handleRegisterStudent}
+          students={students}
+          years={["1", "2", "3", "4"]}
+          programs={["BSCS", "BSIT", "BSSE", "AI"]}
+          onRegister={() => listStudents().then(setStudents).catch(() => {})}
         />
       )}
 
       {tab === "teachers" && (
         <ManageTeachers
-          teachers={adminData.teachers}
-          years={adminData.years}
-          programs={adminData.programs}
-          departments={adminData.departments}
-          onRegister={handleRegisterTeacher}
+          teachers={teachers}
+          years={["1", "2", "3", "4"]}
+          programs={["BSCS", "BSIT", "BSSE"]}
+          departments={["Computer Science", "IT"]}
+          onRegister={() => listTeachers().then(setTeachers).catch(() => {})}
         />
       )}
 
       {tab === "view" && (
         <ViewAttendance
-          years={adminData.years}
-          batches={adminData.batches}
-          programs={adminData.programs}
-          courses={adminData.courses}
-          records={adminData.studentAttendanceRecords}
+          years={["1", "2", "3", "4"]}
+          batches={["2021", "2022", "2023", "2024"]}
+          programs={["BSCS", "BSIT", "BSSE"]}
+          courses={courses}
+          records={{}}
         />
       )}
     </div>
@@ -137,3 +96,4 @@ const AdminDashboard = () => {
 };
 
 export default AdminDashboard;
+
