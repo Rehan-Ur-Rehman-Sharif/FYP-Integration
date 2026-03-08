@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import "../../styles/admin.css";
+import summaryApi from "../../common/index";
 
 const ManageStudents = ({ years, programs, onRegister }) => {
   // Form for new student registration
@@ -45,23 +46,48 @@ const ManageStudents = ({ years, programs, onRegister }) => {
     setBulkForm({ ...bulkForm, [e.target.name]: e.target.value });
   };
 
-  // Register new student
-  const handleSubmit = () => {
+  // Register new student – tries backend API, falls back to localStorage
+  const handleSubmit = async () => {
     if (!form.name || !form.id) {
       alert("Name and ID are required");
       return;
     }
 
-    const newStudent = {
-      ...form,
-      courses: form.courses
-        .split(",")
-        .map(c => {
-          const [code, name] = c.split(":").map(s => s.trim());
-          return { code, name };
-        })
-    };
+    const parsedCourses = form.courses
+      .split(",")
+      .map(c => {
+        const [code, name] = c.split(":").map(s => s.trim());
+        return { code, name };
+      });
 
+    const newStudent = { ...form, courses: parsedCourses };
+
+    // ── Try backend API ──────────────────────────────────────────────
+    try {
+      const response = await fetch(summaryApi.signUp.url, {
+        method: summaryApi.signUp.method.toUpperCase(),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "student",
+          name: form.name,
+          email: form.email,
+          password: form.password,
+          id: form.id,
+          year: form.year,
+          program: form.program,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        alert(`Registration failed: ${err.error || response.statusText}`);
+        return;
+      }
+    } catch (_) {
+      // API unreachable – fall through to localStorage only
+    }
+
+    // ── Always persist locally (offline support / static dev) ────────
     const updatedStudents = [...allStudents, newStudent];
     localStorage.setItem("students", JSON.stringify(updatedStudents));
 

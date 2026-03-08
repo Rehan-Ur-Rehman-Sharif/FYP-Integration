@@ -41,6 +41,293 @@ from .models import (
 )
 
 
+# ============ Unified Frontend-Compatible Endpoints ============
+
+class UnifiedLoginView(APIView):
+    """
+    Unified login endpoint matching the frontend's expected format.
+
+    POST /api/login
+    Request body: { "email": "...", "password": "...", "role": "student|teacher|admin" }
+
+    The frontend (Login.jsx) sends a single { email, password, role } payload.
+    Role "admin" is mapped to the Management model.
+    """
+    permission_classes = [AllowAny]
+
+    ROLE_MAP = {
+        'student': (Student, 'student'),
+        'teacher': (Teacher, 'teacher'),
+        'admin': (Management, 'admin'),
+        'management': (Management, 'admin'),
+    }
+
+    def post(self, request):
+        email = request.data.get('email', '').strip()
+        password = request.data.get('password', '')
+        role = request.data.get('role', 'student').strip().lower()
+
+        if not email or not password:
+            return Response(
+                {'error': 'Email and password are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if role not in self.ROLE_MAP:
+            return Response(
+                {'error': f'Invalid role. Must be one of: {", ".join(self.ROLE_MAP)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = authenticate(username=email, password=password)
+        if user is None:
+            return Response(
+                {'error': 'Invalid email or password'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        ModelClass, user_type = self.ROLE_MAP[role]
+        try:
+            profile = ModelClass.objects.get(user=user)
+        except ModelClass.DoesNotExist:
+            return Response(
+                {'error': f'No {role} profile found for this account'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        refresh = RefreshToken.for_user(user)
+
+        if user_type == 'student':
+            response_data = {
+                'message': 'Login successful',
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'user_type': 'student',
+                'id': profile.student_id,
+                'name': profile.student_name,
+                'email': profile.email,
+            }
+        elif user_type == 'teacher':
+            response_data = {
+                'message': 'Login successful',
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'user_type': 'teacher',
+                'id': profile.teacher_id,
+                'name': profile.teacher_name,
+                'email': profile.email,
+            }
+        else:  # admin / management
+            response_data = {
+                'message': 'Login successful',
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'user_type': 'admin',
+                'id': profile.Management_id,
+                'name': profile.Management_name,
+                'email': profile.email,
+            }
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+
+class UnifiedSignupView(APIView):
+    """
+    Unified signup endpoint matching the frontend's expected format.
+
+    POST /api/signup
+    Request body: {
+      "role": "student|teacher|admin|management",
+      "name": "...",
+      "email": "...",
+      "password": "...",
+      // Student extras: "id" (roll no / used as rfid), "year", "program" (dept), "section"
+      // Teacher extras: "id" (used as rfid)
+      // Admin extras: "university", "department"
+    }
+
+    The frontend (SignUp.jsx and admin ManageStudents/ManageTeacher) sends all
+    registration data through this single endpoint.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        role = request.data.get('role', '').strip().lower()
+        name = request.data.get('name', '').strip()
+        email = request.data.get('email', '').strip()
+        password = request.data.get('password', '')
+
+        if not role or not name or not email or not password:
+            return Response(
+                {'error': 'role, name, email and password are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if role not in ('student', 'teacher', 'admin', 'management'):
+            return Response(
+                {'error': f'Invalid role: {role}. Must be one of: student, teacher, admin, management'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if User.objects.filter(email=email).exists():
+            return Response(
+                {'error': 'Email already exists'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = User.objects.create_user(username=email, email=email, password=password)
+
+        try:
+            if role == 'student':
+                return self._register_student(request, user, name, email)
+            elif role == 'teacher':
+                return self._register_teacher(request, user, name, email)
+            else:  # admin or management
+                return self._register_management(request, user, name, email)
+        except Exception as e:
+            user.delete()
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def _register_student(self, request, user, name, email):
+        rfid = request.data.get('id', '').strip() or f'S{user.id}'
+        if Student.objects.filter(rfid=rfid).exists():
+            rfid = f'{rfid}_{user.id}'
+
+        year_raw = request.data.get('year', '1')
+        try:
+            year_int = int(year_raw)
+        except (ValueError, TypeError):
+            year_int = 1
+
+        dept = (
+            request.data.get('program', '').strip() or
+            request.data.get('dept', '').strip() or
+            ''
+        )
+        section = request.data.get('section', '').strip() or 'A'
+
+        student = Student.objects.create(
+            user=user,
+            email=email,
+            student_name=name,
+            rfid=rfid,
+            year=year_int,
+            dept=dept,
+            section=section,
+        )
+        return Response({
+            'message': 'Student registered successfully',
+            'user_type': 'student',
+            'student_id': student.student_id,
+            'name': student.student_name,
+            'email': student.email,
+        }, status=status.HTTP_201_CREATED)
+
+    def _register_teacher(self, request, user, name, email):
+        rfid = request.data.get('id', '').strip() or f'T{user.id}'
+        if Teacher.objects.filter(rfid=rfid).exists():
+            rfid = f'{rfid}_{user.id}'
+
+        teacher = Teacher.objects.create(
+            user=user,
+            email=email,
+            teacher_name=name,
+            rfid=rfid,
+        )
+        return Response({
+            'message': 'Teacher registered successfully',
+            'user_type': 'teacher',
+            'teacher_id': teacher.teacher_id,
+            'name': teacher.teacher_name,
+            'email': teacher.email,
+        }, status=status.HTTP_201_CREATED)
+
+    def _register_management(self, request, user, name, email):
+        management = Management.objects.create(
+            user=user,
+            email=email,
+            Management_name=name,
+        )
+        return Response({
+            'message': 'Management user registered successfully',
+            'user_type': 'admin',
+            'management_id': management.Management_id,
+            'name': management.Management_name,
+            'email': management.email,
+        }, status=status.HTTP_201_CREATED)
+
+
+class UserDetailsView(APIView):
+    """
+    Returns the current authenticated user's profile details.
+
+    GET /api/user-details
+    Authorization: Bearer <access_token>
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        try:
+            student = Student.objects.get(user=user)
+            return Response({
+                'role': 'student',
+                'id': student.student_id,
+                'name': student.student_name,
+                'email': student.email,
+                'year': student.year,
+                'dept': student.dept,
+                'section': student.section,
+            })
+        except Student.DoesNotExist:
+            pass
+
+        try:
+            teacher = Teacher.objects.get(user=user)
+            return Response({
+                'role': 'teacher',
+                'id': teacher.teacher_id,
+                'name': teacher.teacher_name,
+                'email': teacher.email,
+            })
+        except Teacher.DoesNotExist:
+            pass
+
+        try:
+            mgmt = Management.objects.get(user=user)
+            return Response({
+                'role': 'admin',
+                'id': mgmt.Management_id,
+                'name': mgmt.Management_name,
+                'email': mgmt.email,
+            })
+        except Management.DoesNotExist:
+            pass
+
+        return Response(
+            {'error': 'User profile not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+
+class UserLogoutView(APIView):
+    """
+    Logout endpoint.
+
+    GET /api/user-logout
+    Authorization: Bearer <access_token>
+
+    Acknowledges logout. The client should discard stored tokens.
+    For full token invalidation, include the refresh token in the request body
+    and add 'rest_framework_simplejwt.token_blacklist' to INSTALLED_APPS.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({'message': 'Logged out successfully'}, status=status.HTTP_200_OK)
+
+
 # ============ CRUD ViewSets for all models ============
 
 class StudentViewSet(viewsets.ModelViewSet):

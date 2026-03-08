@@ -28,7 +28,11 @@ from .views import (
     AttendanceSessionViewSet,
     AttendanceRecordViewSet,
     RFIDScanView,
-    QRScanView
+    QRScanView,
+    UnifiedLoginView,
+    UnifiedSignupView,
+    UserDetailsView,
+    UserLogoutView,
 )
 
 # Create a router for CRUD ViewSets
@@ -45,6 +49,13 @@ router.register(r'attendance-sessions', AttendanceSessionViewSet, basename='atte
 router.register(r'attendance-records', AttendanceRecordViewSet, basename='attendancerecord')
 
 urlpatterns = [
+    # ── Frontend-compatible unified endpoints ──────────────────────────────
+    # These match the URLs defined in the frontend's common/index.js
+    path('login', UnifiedLoginView.as_view(), name='unified-login'),
+    path('signup', UnifiedSignupView.as_view(), name='unified-signup'),
+    path('user-details', UserDetailsView.as_view(), name='user-details'),
+    path('user-logout', UserLogoutView.as_view(), name='user-logout'),
+
     # CRUD API endpoints (from router)
     path('', include(router.urls)),
     

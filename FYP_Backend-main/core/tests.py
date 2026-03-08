@@ -1401,3 +1401,237 @@ class AttendanceSessionStatisticsTestCase(APITestCase):
         self.assertEqual(response.data['statistics']['qr_only'], 1)
 
 
+
+
+# ============ Tests for Unified Frontend-Compatible Endpoints ============
+
+class UnifiedLoginTestCase(APITestCase):
+    """Tests for POST /api/login – the unified login endpoint consumed by the frontend."""
+
+    def setUp(self):
+        self.url = reverse('unified-login')
+
+        # Create a student
+        self.student_user = User.objects.create_user(
+            username='stu@test.com', email='stu@test.com', password='Pass123!'
+        )
+        self.student = Student.objects.create(
+            user=self.student_user, email='stu@test.com',
+            student_name='Test Student', rfid='RFID_STU',
+            year=1, dept='CS', section='A'
+        )
+
+        # Create a teacher
+        self.teacher_user = User.objects.create_user(
+            username='tch@test.com', email='tch@test.com', password='Pass123!'
+        )
+        self.teacher = Teacher.objects.create(
+            user=self.teacher_user, email='tch@test.com',
+            teacher_name='Test Teacher', rfid='RFID_TCH'
+        )
+
+        # Create a management (admin) user
+        self.admin_user = User.objects.create_user(
+            username='adm@test.com', email='adm@test.com', password='Pass123!'
+        )
+        self.management = Management.objects.create(
+            user=self.admin_user, email='adm@test.com',
+            Management_name='Test Admin'
+        )
+
+    def test_student_login_with_role(self):
+        """Frontend sends { email, password, role: 'student' }"""
+        response = self.client.post(self.url, {
+            'email': 'stu@test.com',
+            'password': 'Pass123!',
+            'role': 'student',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('access', response.data)
+        self.assertEqual(response.data['user_type'], 'student')
+        self.assertEqual(response.data['email'], 'stu@test.com')
+
+    def test_teacher_login_with_role(self):
+        """Frontend sends { email, password, role: 'teacher' }"""
+        response = self.client.post(self.url, {
+            'email': 'tch@test.com',
+            'password': 'Pass123!',
+            'role': 'teacher',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['user_type'], 'teacher')
+
+    def test_admin_login_with_role(self):
+        """Frontend sends { email, password, role: 'admin' } – maps to Management"""
+        response = self.client.post(self.url, {
+            'email': 'adm@test.com',
+            'password': 'Pass123!',
+            'role': 'admin',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['user_type'], 'admin')
+
+    def test_wrong_password(self):
+        response = self.client.post(self.url, {
+            'email': 'stu@test.com',
+            'password': 'WrongPass!',
+            'role': 'student',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_wrong_role_for_user(self):
+        """Student credentials used with role='teacher' should return 404"""
+        response = self.client.post(self.url, {
+            'email': 'stu@test.com',
+            'password': 'Pass123!',
+            'role': 'teacher',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_missing_email(self):
+        response = self.client.post(self.url, {
+            'password': 'Pass123!',
+            'role': 'student',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_invalid_role(self):
+        response = self.client.post(self.url, {
+            'email': 'stu@test.com',
+            'password': 'Pass123!',
+            'role': 'superuser',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class UnifiedSignupTestCase(APITestCase):
+    """Tests for POST /api/signup – the unified signup endpoint consumed by the frontend."""
+
+    def setUp(self):
+        self.url = reverse('unified-signup')
+
+    def test_signup_student_with_frontend_fields(self):
+        """Admin panel registers a student using frontend field names."""
+        response = self.client.post(self.url, {
+            'role': 'student',
+            'name': 'New Student',
+            'email': 'newstudent@test.com',
+            'password': 'Pass123!',
+            'id': 'ROLL001',
+            'year': '2',
+            'program': 'CS',
+            'section': 'B',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['user_type'], 'student')
+        self.assertTrue(Student.objects.filter(email='newstudent@test.com').exists())
+        student = Student.objects.get(email='newstudent@test.com')
+        self.assertEqual(student.student_name, 'New Student')
+        self.assertEqual(student.rfid, 'ROLL001')
+        self.assertEqual(student.year, 2)
+        self.assertEqual(student.dept, 'CS')
+
+    def test_signup_student_without_optional_fields(self):
+        """Student registration without section/program uses sensible defaults."""
+        response = self.client.post(self.url, {
+            'role': 'student',
+            'name': 'Min Student',
+            'email': 'minstudent@test.com',
+            'password': 'Pass123!',
+            'id': 'ROLL002',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        student = Student.objects.get(email='minstudent@test.com')
+        self.assertEqual(student.section, 'A')  # default
+
+    def test_signup_teacher_with_frontend_fields(self):
+        """Admin panel registers a teacher using frontend field names."""
+        response = self.client.post(self.url, {
+            'role': 'teacher',
+            'name': 'New Teacher',
+            'email': 'newteacher@test.com',
+            'password': 'Pass123!',
+            'id': 'TCH001',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['user_type'], 'teacher')
+        self.assertTrue(Teacher.objects.filter(email='newteacher@test.com').exists())
+
+    def test_signup_admin(self):
+        """Admin (management) signup from SignUp.jsx."""
+        response = self.client.post(self.url, {
+            'role': 'admin',
+            'name': 'New Admin',
+            'email': 'newadmin@test.com',
+            'password': 'Pass123!',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['user_type'], 'admin')
+        self.assertTrue(Management.objects.filter(email='newadmin@test.com').exists())
+
+    def test_duplicate_email(self):
+        self.client.post(self.url, {
+            'role': 'student',
+            'name': 'A', 'email': 'dup@test.com',
+            'password': 'Pass123!', 'id': 'X1',
+        }, format='json')
+        response = self.client.post(self.url, {
+            'role': 'student',
+            'name': 'B', 'email': 'dup@test.com',
+            'password': 'Pass123!', 'id': 'X2',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_missing_required_fields(self):
+        response = self.client.post(self.url, {
+            'role': 'student',
+            'email': 'incomplete@test.com',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class UserDetailsTestCase(APITestCase):
+    """Tests for GET /api/user-details – returns current user's profile."""
+
+    def setUp(self):
+        self.url = reverse('user-details')
+        self.user = User.objects.create_user(
+            username='me@test.com', email='me@test.com', password='Pass123!'
+        )
+        self.student = Student.objects.create(
+            user=self.user, email='me@test.com',
+            student_name='Me Student', rfid='RFID_ME',
+            year=3, dept='IT', section='C'
+        )
+
+    def test_authenticated_user_gets_profile(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['role'], 'student')
+        self.assertEqual(response.data['name'], 'Me Student')
+        self.assertEqual(response.data['email'], 'me@test.com')
+
+    def test_unauthenticated_user_denied(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class UserLogoutTestCase(APITestCase):
+    """Tests for GET /api/user-logout."""
+
+    def setUp(self):
+        self.url = reverse('user-logout')
+        self.user = User.objects.create_user(
+            username='bye@test.com', email='bye@test.com', password='Pass123!'
+        )
+
+    def test_authenticated_logout(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('message', response.data)
+
+    def test_unauthenticated_logout_denied(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)

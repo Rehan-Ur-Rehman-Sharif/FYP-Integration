@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import "../../styles/admin.css";
+import summaryApi from "../../common/index";
 
 const ManageTeachers = ({ programs = [], years = [] }) => {
   /* ======================
@@ -71,7 +72,7 @@ const ManageTeachers = ({ programs = [], years = [] }) => {
   /* ======================
      REGISTER TEACHER
   ====================== */
-  const handleRegister = () => {
+  const handleRegister = async () => {
     if (!form.id || !form.name) {
       alert("Teacher ID and Name are required");
       return;
@@ -94,6 +95,30 @@ const ManageTeachers = ({ programs = [], years = [] }) => {
       password: form.id // default password
     };
 
+    // ── Try backend API ──────────────────────────────────────────────
+    try {
+      const response = await fetch(summaryApi.signUp.url, {
+        method: summaryApi.signUp.method.toUpperCase(),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "teacher",
+          name: form.name,
+          email: form.email,
+          password: form.id, // default password = teacher ID
+          id: form.id,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        alert(`Registration failed: ${err.error || response.statusText}`);
+        return;
+      }
+    } catch (_) {
+      // API unreachable – fall through to localStorage only
+    }
+
+    // ── Always persist locally (offline support / static dev) ────────
     const updated = [...teachers, newTeacher];
     localStorage.setItem("teachers", JSON.stringify(updated));
     setTeachers(updated);

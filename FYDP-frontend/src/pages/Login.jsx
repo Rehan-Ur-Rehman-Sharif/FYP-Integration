@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-
+import summaryApi from "../common/index";
 import teacherData from "../data/TeacherData";
 import adminData from "../data/AdminData";
 
@@ -18,9 +18,52 @@ const Login = () => {
     setData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmit = (e) => {
+  /* ------------------------------------------------------------------
+     Try the backend API first; fall back to localStorage / static data
+     when the API is unavailable (e.g. during local-only development).
+  ------------------------------------------------------------------ */
+  const loginViaApi = async () => {
+    const response = await fetch(summaryApi.login.url, {
+      method: summaryApi.login.method.toUpperCase(),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: data.email,
+        password: data.password,
+        role: data.role,
+      }),
+    });
+
+    if (!response.ok) return null;
+    return response.json();
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
+    // ── Try backend API ──────────────────────────────────────────────
+    try {
+      const result = await loginViaApi();
+      if (result && result.access) {
+        // Store JWT tokens and current user info
+        localStorage.setItem("accessToken", result.access);
+        localStorage.setItem("refreshToken", result.refresh);
+        localStorage.setItem(
+          "currentUser",
+          JSON.stringify({
+            role: result.user_type,
+            id: result.id,
+            name: result.name,
+            email: result.email,
+          })
+        );
+        navigate(`/${result.user_type === "admin" ? "admin" : result.user_type}`);
+        return;
+      }
+    } catch (_) {
+      // API unreachable – fall through to localStorage fallback
+    }
+
+    // ── Fallback: local data ─────────────────────────────────────────
     /* =========================
        STUDENT LOGIN
     ========================= */
@@ -182,3 +225,4 @@ const Login = () => {
 };
 
 export default Login;
+
