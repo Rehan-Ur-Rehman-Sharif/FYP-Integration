@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import "../../styles/admin.css";
+import summaryApi from "../../common/index";
 
 const ManageStudents = ({ years, programs, onRegister }) => {
   // Form for new student registration
@@ -45,23 +46,48 @@ const ManageStudents = ({ years, programs, onRegister }) => {
     setBulkForm({ ...bulkForm, [e.target.name]: e.target.value });
   };
 
-  // Register new student
-  const handleSubmit = () => {
+  // Register new student – tries backend API, falls back to localStorage
+  const handleSubmit = async () => {
     if (!form.name || !form.id) {
       alert("Name and ID are required");
       return;
     }
 
-    const newStudent = {
-      ...form,
-      courses: form.courses
-        .split(",")
-        .map(c => {
-          const [code, name] = c.split(":").map(s => s.trim());
-          return { code, name };
-        })
-    };
+    const parsedCourses = form.courses
+      .split(",")
+      .map(c => {
+        const [code, name] = c.split(":").map(s => s.trim());
+        return { code, name };
+      });
 
+    const newStudent = { ...form, courses: parsedCourses };
+
+    // ── Try backend API ──────────────────────────────────────────────
+    try {
+      const response = await fetch(summaryApi.signUp.url, {
+        method: summaryApi.signUp.method.toUpperCase(),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "student",
+          name: form.name,
+          email: form.email,
+          password: form.password,
+          id: form.id,
+          year: form.year,
+          program: form.program,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        alert(`Registration failed: ${err.error || response.statusText}`);
+        return;
+      }
+    } catch (_error) { // API unreachable – use offline fallback
+      // API unreachable – fall through to localStorage only
+    }
+
+    // ── Always persist locally (offline support / static dev) ────────
     const updatedStudents = [...allStudents, newStudent];
     localStorage.setItem("students", JSON.stringify(updatedStudents));
 
@@ -135,12 +161,43 @@ const ManageStudents = ({ years, programs, onRegister }) => {
     setShowBulkModal(false);
   };
 
-  // Filter students by year & program
-  const handleFilter = () => {
+  // Filter students by year & program – tries backend, falls back to localStorage
+  const handleFilter = async () => {
     if (!filterYear || !filterProgram) {
       alert("Please select both Year and Program");
       return;
     }
+
+    // ── Try backend API ──────────────────────────────────────────────
+    try {
+      const token = localStorage.getItem("accessToken");
+      const url = `${summaryApi.students.url}?year=${encodeURIComponent(filterYear)}&program=${encodeURIComponent(filterProgram)}`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        // Map backend fields to the frontend table shape
+        const mapped = data.map(s => ({
+          id: s.rfid,
+          name: s.student_name,
+          year: String(s.year),
+          program: s.program || s.dept,
+          email: s.email || "",
+          courses: [] // courses are managed separately in the backend
+        }));
+        setFilteredStudents(mapped);
+        return;
+      }
+    } catch (_error) { // API unreachable – use offline fallback
+      // API unreachable – fall through to localStorage
+    }
+
+    // ── Fallback: filter from localStorage ───────────────────────────
     const result = allStudents.filter(
       s => s.year === filterYear && s.program === filterProgram
     );

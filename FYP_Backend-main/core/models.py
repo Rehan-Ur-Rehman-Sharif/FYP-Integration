@@ -27,9 +27,12 @@ class Student(models.Model):
 
 class Course(models.Model):
     course_id = models.AutoField(primary_key=True)
+    course_code = models.CharField(max_length=20, blank=True, default='')  # e.g., CS301
     course_name = models.CharField(max_length=200)
 
     def __str__(self):
+        if self.course_code:
+            return f"{self.course_code} - {self.course_name}"
         return self.course_name
 
 class Teacher(models.Model):
@@ -39,6 +42,9 @@ class Teacher(models.Model):
     email = models.EmailField(unique=True, null=True, blank=True)
     # image = models.ImageField(upload_to='teacher_images/', null=True, blank=True)
     rfid = models.CharField(max_length=100, unique=True)
+    phone = models.CharField(max_length=20, blank=True, default='')
+    years = models.CharField(max_length=255, blank=True, default='')     # comma-separated, e.g. "1,2,3"
+    programs = models.CharField(max_length=255, blank=True, default='')  # comma-separated, e.g. "CS,IT"
 
     def __str__(self):
         return self.teacher_name

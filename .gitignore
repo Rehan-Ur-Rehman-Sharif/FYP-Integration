@@ -1,0 +1,15 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Django
+*.sqlite3
+db.sqlite3
+*.log
+
+# Node / frontend
+node_modules/
+dist/
+.env
+.env.local

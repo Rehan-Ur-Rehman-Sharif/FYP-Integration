@@ -28,7 +28,13 @@ from .views import (
     AttendanceSessionViewSet,
     AttendanceRecordViewSet,
     RFIDScanView,
-    QRScanView
+    QRScanView,
+    UnifiedLoginView,
+    UnifiedSignupView,
+    UserDetailsView,
+    UserLogoutView,
+    StudentAttendanceSummaryView,
+    CourseAttendanceSummaryView,
 )
 
 # Create a router for CRUD ViewSets
@@ -45,6 +51,13 @@ router.register(r'attendance-sessions', AttendanceSessionViewSet, basename='atte
 router.register(r'attendance-records', AttendanceRecordViewSet, basename='attendancerecord')
 
 urlpatterns = [
+    # ── Frontend-compatible unified endpoints ──────────────────────────────
+    # These match the URLs defined in the frontend's common/index.js
+    path('login', UnifiedLoginView.as_view(), name='unified-login'),
+    path('signup', UnifiedSignupView.as_view(), name='unified-signup'),
+    path('user-details', UserDetailsView.as_view(), name='user-details'),
+    path('user-logout', UserLogoutView.as_view(), name='user-logout'),
+
     # CRUD API endpoints (from router)
     path('', include(router.urls)),
     
@@ -59,6 +72,10 @@ urlpatterns = [
     # Attendance scanning endpoints
     path('attendance/rfid-scan/', RFIDScanView.as_view(), name='rfid-scan'),
     path('attendance/qr-scan/', QRScanView.as_view(), name='qr-scan'),
+
+    # Admin dashboard attendance summary endpoints
+    path('attendance/student/', StudentAttendanceSummaryView.as_view(), name='attendance-student-summary'),
+    path('attendance/course/', CourseAttendanceSummaryView.as_view(), name='attendance-course-summary'),
     
     # API Registration endpoints
     path('auth/register/student/', StudentRegistrationView.as_view(), name='student-register'),

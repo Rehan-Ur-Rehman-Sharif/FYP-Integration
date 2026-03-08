@@ -33,12 +33,361 @@ from .serializers import (
     AttendanceSessionSerializer,
     AttendanceRecordSerializer,
     RFIDScanSerializer,
-    QRScanSerializer
+    QRScanSerializer,
+    StudentAttendanceSummarySerializer,
+    CourseAttendanceSummarySerializer,
 )
 from .models import (
     Student, Teacher, Management, StudentCourse, TaughtCourse, Course, Class,
     UpdateAttendanceRequest, AttendanceSession, AttendanceRecord
 )
+
+
+# ============ Unified Frontend-Compatible Endpoints ============
+
+class UnifiedLoginView(APIView):
+    """
+    Unified login endpoint matching the frontend's expected format.
+
+    POST /api/login
+    Request body: { "email": "...", "password": "...", "role": "student|teacher|admin" }
+
+    The frontend (Login.jsx) sends a single { email, password, role } payload.
+    Role "admin" is mapped to the Management model.
+    """
+    permission_classes = [AllowAny]
+
+    ROLE_MAP = {
+        'student': (Student, 'student'),
+        'teacher': (Teacher, 'teacher'),
+        'admin': (Management, 'admin'),
+        'management': (Management, 'admin'),
+    }
+
+    def post(self, request):
+        email = request.data.get('email', '').strip()
+        password = request.data.get('password', '')
+        role = request.data.get('role', 'student').strip().lower()
+
+        if not email or not password:
+            return Response(
+                {'error': 'Email and password are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if role not in self.ROLE_MAP:
+            return Response(
+                {'error': f'Invalid role. Must be one of: {", ".join(self.ROLE_MAP)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = authenticate(username=email, password=password)
+        if user is None:
+            return Response(
+                {'error': 'Invalid email or password'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        ModelClass, user_type = self.ROLE_MAP[role]
+        try:
+            profile = ModelClass.objects.get(user=user)
+        except ModelClass.DoesNotExist:
+            return Response(
+                {'error': f'No {role} profile found for this account'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        refresh = RefreshToken.for_user(user)
+
+        if user_type == 'student':
+            response_data = {
+                'message': 'Login successful',
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'user_type': 'student',
+                'id': profile.student_id,
+                'name': profile.student_name,
+                'email': profile.email,
+            }
+        elif user_type == 'teacher':
+            response_data = {
+                'message': 'Login successful',
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'user_type': 'teacher',
+                'id': profile.teacher_id,
+                'name': profile.teacher_name,
+                'email': profile.email,
+            }
+        else:  # admin / management
+            response_data = {
+                'message': 'Login successful',
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'user_type': 'admin',
+                'id': profile.Management_id,
+                'name': profile.Management_name,
+                'email': profile.email,
+            }
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+
+class UnifiedSignupView(APIView):
+    """
+    Unified signup endpoint matching the frontend's expected format.
+
+    POST /api/signup
+    Request body: {
+      "role": "student|teacher|admin|management",
+      "name": "...",
+      "email": "...",
+      "password": "...",
+      // Student extras: "id" (roll no / used as rfid), "year", "program" (dept), "section"
+      // Teacher extras: "id" (used as rfid)
+      // Admin extras: "university", "department"
+    }
+
+    The frontend (SignUp.jsx and admin ManageStudents/ManageTeacher) sends all
+    registration data through this single endpoint.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        role = request.data.get('role', '').strip().lower()
+        name = request.data.get('name', '').strip()
+        email = request.data.get('email', '').strip()
+        password = request.data.get('password', '')
+
+        if not role or not name or not email or not password:
+            return Response(
+                {'error': 'role, name, email and password are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if role not in ('student', 'teacher', 'admin', 'management'):
+            return Response(
+                {'error': f'Invalid role: {role}. Must be one of: student, teacher, admin, management'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if User.objects.filter(email=email).exists():
+            return Response(
+                {'error': 'Email already exists'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = User.objects.create_user(username=email, email=email, password=password)
+
+        try:
+            if role == 'student':
+                return self._register_student(request, user, name, email)
+            elif role == 'teacher':
+                return self._register_teacher(request, user, name, email)
+            else:  # admin or management
+                return self._register_management(request, user, name, email)
+        except Exception as e:
+            user.delete()
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @staticmethod
+    def _parse_and_create_courses(courses_raw):
+        """
+        Parse a comma-separated course string like "CS301: Database, CS401: Algo"
+        into Course model objects (get_or_create), returning a list of dicts.
+        """
+        created_courses = []
+        if not courses_raw:
+            return created_courses
+        for item in courses_raw.split(','):
+            item = item.strip()
+            if not item:
+                continue
+            if ':' in item:
+                code, _, cname = item.partition(':')
+                code = code.strip()
+                cname = cname.strip()
+            else:
+                code = ''
+                cname = item
+
+            if code:
+                course, _ = Course.objects.get_or_create(
+                    course_code=code,
+                    defaults={'course_name': cname or code}
+                )
+            else:
+                course, _ = Course.objects.get_or_create(course_name=cname)
+            created_courses.append({'course_code': course.course_code, 'course_name': course.course_name})
+        return created_courses
+
+    def _register_student(self, request, user, name, email):
+        rfid = request.data.get('id', '').strip() or f'S{user.id}'
+        if Student.objects.filter(rfid=rfid).exists():
+            rfid = f'{rfid}_{user.id}'
+
+        year_raw = request.data.get('year', '1')
+        try:
+            year_int = int(year_raw)
+        except (ValueError, TypeError):
+            year_int = 1
+
+        dept = (
+            request.data.get('program', '').strip() or
+            request.data.get('dept', '').strip() or
+            ''
+        )
+        section = request.data.get('section', '').strip() or 'A'
+
+        student = Student.objects.create(
+            user=user,
+            email=email,
+            student_name=name,
+            rfid=rfid,
+            year=year_int,
+            dept=dept,
+            section=section,
+        )
+
+        # Handle courses: "CS301: Database, CS401: Algo" – create Course objects if needed
+        created_courses = self._parse_and_create_courses(request.data.get('courses', '').strip())
+
+        return Response({
+            'message': 'Student registered successfully',
+            'user_type': 'student',
+            'student_id': student.student_id,
+            'name': student.student_name,
+            'email': student.email,
+            'courses': created_courses,
+        }, status=status.HTTP_201_CREATED)
+
+    def _register_teacher(self, request, user, name, email):
+        rfid = request.data.get('id', '').strip() or f'T{user.id}'
+        if Teacher.objects.filter(rfid=rfid).exists():
+            rfid = f'{rfid}_{user.id}'
+
+        phone = request.data.get('phone', '').strip()
+        years_raw = request.data.get('years', '').strip()
+        programs_raw = request.data.get('programs', '').strip()
+
+        teacher = Teacher.objects.create(
+            user=user,
+            email=email,
+            teacher_name=name,
+            rfid=rfid,
+            phone=phone,
+            years=years_raw,
+            programs=programs_raw,
+        )
+
+        # Handle courses: create Course + TaughtCourse entries
+        created_courses = []
+        for course_info in self._parse_and_create_courses(request.data.get('courses', '').strip()):
+            course = Course.objects.get(course_code=course_info['course_code']) if course_info['course_code'] \
+                else Course.objects.get(course_name=course_info['course_name'])
+            TaughtCourse.objects.get_or_create(
+                teacher=teacher,
+                course=course,
+                defaults={'classes_taken': '0'}
+            )
+            created_courses.append(course_info)
+
+        return Response({
+            'message': 'Teacher registered successfully',
+            'user_type': 'teacher',
+            'teacher_id': teacher.teacher_id,
+            'name': teacher.teacher_name,
+            'email': teacher.email,
+            'phone': teacher.phone,
+            'years': teacher.years,
+            'programs': teacher.programs,
+            'courses': created_courses,
+        }, status=status.HTTP_201_CREATED)
+
+    def _register_management(self, request, user, name, email):
+        management = Management.objects.create(
+            user=user,
+            email=email,
+            Management_name=name,
+        )
+        return Response({
+            'message': 'Management user registered successfully',
+            'user_type': 'admin',
+            'management_id': management.Management_id,
+            'name': management.Management_name,
+            'email': management.email,
+        }, status=status.HTTP_201_CREATED)
+
+
+class UserDetailsView(APIView):
+    """
+    Returns the current authenticated user's profile details.
+
+    GET /api/user-details
+    Authorization: Bearer <access_token>
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        try:
+            student = Student.objects.get(user=user)
+            return Response({
+                'role': 'student',
+                'id': student.student_id,
+                'name': student.student_name,
+                'email': student.email,
+                'year': student.year,
+                'dept': student.dept,
+                'section': student.section,
+            })
+        except Student.DoesNotExist:
+            pass
+
+        try:
+            teacher = Teacher.objects.get(user=user)
+            return Response({
+                'role': 'teacher',
+                'id': teacher.teacher_id,
+                'name': teacher.teacher_name,
+                'email': teacher.email,
+            })
+        except Teacher.DoesNotExist:
+            pass
+
+        try:
+            mgmt = Management.objects.get(user=user)
+            return Response({
+                'role': 'admin',
+                'id': mgmt.Management_id,
+                'name': mgmt.Management_name,
+                'email': mgmt.email,
+            })
+        except Management.DoesNotExist:
+            pass
+
+        return Response(
+            {'error': 'User profile not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+
+class UserLogoutView(APIView):
+    """
+    Logout endpoint.
+
+    GET /api/user-logout
+    Authorization: Bearer <access_token>
+
+    Acknowledges logout. The client should discard stored tokens.
+    For full token invalidation, include the refresh token in the request body
+    and add 'rest_framework_simplejwt.token_blacklist' to INSTALLED_APPS.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({'message': 'Logged out successfully'}, status=status.HTTP_200_OK)
 
 
 # ============ CRUD ViewSets for all models ============
@@ -59,9 +408,12 @@ class StudentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset.all()
-        # Optional filters
+        # Optional filters – accept both 'dept' and 'program' (frontend uses 'program')
         year = self.request.query_params.get('year')
-        dept = self.request.query_params.get('dept')
+        dept = (
+            self.request.query_params.get('dept') or
+            self.request.query_params.get('program')
+        )
         section = self.request.query_params.get('section')
         if year:
             queryset = queryset.filter(year=year)
@@ -81,10 +433,23 @@ class TeacherViewSet(viewsets.ModelViewSet):
     - PUT /teachers/{id}/ - Update a teacher
     - PATCH /teachers/{id}/ - Partial update a teacher
     - DELETE /teachers/{id}/ - Delete a teacher
+
+    Optional filter query params: ?year=X&program=Y
     """
     queryset = Teacher.objects.all()
     serializer_class = TeacherSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = self.queryset.all()
+        # Filter by year or program – stored as comma-separated strings, use icontains
+        year = self.request.query_params.get('year', '').strip()
+        program = self.request.query_params.get('program', '').strip()
+        if year:
+            queryset = queryset.filter(years__icontains=year)
+        if program:
+            queryset = queryset.filter(programs__icontains=program)
+        return queryset
 
 
 class ManagementViewSet(viewsets.ModelViewSet):
@@ -849,6 +1214,150 @@ class ManagementLoginView(APIView):
                     'error': 'Invalid email or password'
                 }, status=status.HTTP_401_UNAUTHORIZED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+# ============ Admin Dashboard Attendance Summary Views ============
+
+class StudentAttendanceSummaryView(APIView):
+    """
+    Returns attendance summary for a student across all enrolled courses.
+
+    GET /api/attendance/student/?rfid=<roll_no>
+         /api/attendance/student/?student_id=<pk>
+
+    Used by the admin dashboard → View Attendance → Individual Student Search tab.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        rfid = request.query_params.get('rfid', '').strip()
+        student_id = request.query_params.get('student_id', '').strip()
+
+        if not rfid and not student_id:
+            return Response(
+                {'error': 'Provide rfid (roll number) or student_id as query param'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            if rfid:
+                student = Student.objects.get(rfid=rfid)
+            else:
+                student = Student.objects.get(student_id=student_id)
+        except Student.DoesNotExist:
+            return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Build per-course attendance from StudentCourse + AttendanceRecord data
+        student_courses = StudentCourse.objects.filter(student=student).select_related('course', 'teacher')
+        courses_data = []
+        for sc in student_courses:
+            attended_list, attended = _classes_attended_count(sc.classes_attended)
+
+            # Count total sessions for this course/teacher combination
+            total_sessions = AttendanceSession.objects.filter(
+                course=sc.course,
+                teacher=sc.teacher
+            ).count()
+
+            percent = _attendance_percent(attended, total_sessions)
+
+            courses_data.append({
+                'course_id': sc.course.course_id,
+                'course_code': sc.course.course_code,
+                'course_name': sc.course.course_name,
+                'teacher_name': sc.teacher.teacher_name,
+                'classes_attended_list': attended_list,
+                'attended': attended,
+                'total_sessions': total_sessions,
+                'percent': percent,
+            })
+
+        data = {
+            'student_id': student.student_id,
+            'name': student.student_name,
+            'rfid': student.rfid,
+            'year': student.year,
+            'program': student.dept,
+            'section': student.section,
+            'email': student.email or '',
+            'overall_attendance': student.overall_attendance,
+            'courses': courses_data,
+        }
+        serializer = StudentAttendanceSummarySerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+def _attendance_percent(attended, total_sessions):
+    """Return attendance percentage (0–100 rounded to 1 dp), avoiding division by zero."""
+    return round(attended / total_sessions * 100, 1) if total_sessions > 0 else 0.0
+
+
+def _classes_attended_count(classes_attended_str):
+    """Parse a comma-separated attendance string and return (list_of_dates, count)."""
+    attended_list = [d.strip() for d in classes_attended_str.split(',') if d.strip()] \
+        if classes_attended_str else []
+    return attended_list, len(attended_list)
+
+
+class CourseAttendanceSummaryView(APIView):
+    """
+    Returns attendance summary for all students enrolled in a given course.
+
+    GET /api/attendance/course/?course_code=<code>
+         /api/attendance/course/?course_id=<pk>
+
+    Used by the admin dashboard → View Attendance → Course-wise Attendance tab.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        course_code = request.query_params.get('course_code', '').strip()
+        course_id = request.query_params.get('course_id', '').strip()
+
+        if not course_code and not course_id:
+            return Response(
+                {'error': 'Provide course_code or course_id as query param'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            if course_code:
+                course = Course.objects.get(course_code=course_code)
+            else:
+                course = Course.objects.get(course_id=course_id)
+        except Course.DoesNotExist:
+            return Response({'error': 'Course not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Total sessions held for this course
+        total_sessions = AttendanceSession.objects.filter(course=course).count()
+
+        # All students enrolled in this course via StudentCourse
+        student_courses = StudentCourse.objects.filter(course=course).select_related('student')
+        students_data = []
+        for sc in student_courses:
+            _, attended = _classes_attended_count(sc.classes_attended)
+            percent = _attendance_percent(attended, total_sessions)
+
+            students_data.append({
+                'student_id': sc.student.student_id,
+                'roll': sc.student.rfid,
+                'name': sc.student.student_name,
+                'year': sc.student.year,
+                'program': sc.student.dept,
+                'section': sc.student.section,
+                'attended': attended,
+                'total_sessions': total_sessions,
+                'percent': percent,
+            })
+
+        data = {
+            'course_id': course.course_id,
+            'course_code': course.course_code,
+            'course_name': course.course_name,
+            'students': students_data,
+        }
+        serializer = CourseAttendanceSummarySerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # Template-based views for login and register pages

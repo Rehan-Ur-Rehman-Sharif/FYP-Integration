@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import "../../styles/admin.css";
+import summaryApi from "../../common/index";
 
 const ManageTeachers = ({ programs = [], years = [] }) => {
   /* ======================
@@ -71,7 +72,7 @@ const ManageTeachers = ({ programs = [], years = [] }) => {
   /* ======================
      REGISTER TEACHER
   ====================== */
-  const handleRegister = () => {
+  const handleRegister = async () => {
     if (!form.id || !form.name) {
       alert("Teacher ID and Name are required");
       return;
@@ -94,6 +95,34 @@ const ManageTeachers = ({ programs = [], years = [] }) => {
       password: form.id // default password
     };
 
+    // ── Try backend API ──────────────────────────────────────────────
+    try {
+      const response = await fetch(summaryApi.signUp.url, {
+        method: summaryApi.signUp.method.toUpperCase(),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: "teacher",
+          name: form.name,
+          email: form.email,
+          password: form.id, // default password = teacher ID
+          id: form.id,
+          phone: form.phone,
+          years: form.years,
+          programs: form.programs,
+          courses: form.courses,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        alert(`Registration failed: ${err.error || response.statusText}`);
+        return;
+      }
+    } catch (_error) { // API unreachable – use offline fallback
+      // API unreachable – fall through to localStorage only
+    }
+
+    // ── Always persist locally (offline support / static dev) ────────
     const updated = [...teachers, newTeacher];
     localStorage.setItem("teachers", JSON.stringify(updated));
     setTeachers(updated);
@@ -112,20 +141,51 @@ const ManageTeachers = ({ programs = [], years = [] }) => {
   };
 
   /* ======================
-     SEARCH
+     SEARCH – tries backend, falls back to localStorage
   ====================== */
-  const handleSearch = () => {
+  const handleSearch = async () => {
     if (!filterYear || !filterProgram) {
       alert("Select Year & Program");
       return;
     }
 
+    // ── Try backend API ──────────────────────────────────────────────
+    try {
+      const token = localStorage.getItem("accessToken");
+      const url = `${summaryApi.teachers.url}?year=${encodeURIComponent(filterYear)}&program=${encodeURIComponent(filterProgram)}`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        // Map backend fields to frontend table shape
+        const mapped = data.map(t => ({
+          id: t.rfid,
+          name: t.teacher_name,
+          email: t.email || "",
+          phone: t.phone || "",
+          years: t.years ? t.years.split(",").map(y => y.trim()).filter(Boolean) : [],
+          programs: t.programs ? t.programs.split(",").map(p => p.trim()).filter(Boolean) : [],
+          department: admin.department || "N/A",
+          courses: []
+        }));
+        setFilteredTeachers(mapped);
+        return;
+      }
+    } catch (_error) { // API unreachable – use offline fallback
+      // API unreachable – fall through to localStorage
+    }
+
+    // ── Fallback: filter from localStorage ───────────────────────────
     const result = teachers.filter(
       t =>
         t.years.includes(filterYear) &&
         t.programs.includes(filterProgram)
     );
-
     setFilteredTeachers(result);
   };
 

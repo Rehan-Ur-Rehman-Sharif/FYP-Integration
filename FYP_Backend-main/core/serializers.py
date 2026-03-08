@@ -11,17 +11,20 @@ from .models import (
 
 class StudentSerializer(serializers.ModelSerializer):
     """Serializer for Student model CRUD operations"""
+    # 'program' is a frontend-friendly alias for the 'dept' field
+    program = serializers.CharField(source='dept', read_only=True)
+
     class Meta:
         model = Student
-        fields = ['student_id', 'student_name', 'email', 'rfid', 'overall_attendance', 'year', 'dept', 'section']
-        read_only_fields = ['student_id']
+        fields = ['student_id', 'student_name', 'email', 'rfid', 'overall_attendance', 'year', 'dept', 'program', 'section']
+        read_only_fields = ['student_id', 'program']
 
 
 class TeacherSerializer(serializers.ModelSerializer):
     """Serializer for Teacher model CRUD operations"""
     class Meta:
         model = Teacher
-        fields = ['teacher_id', 'teacher_name', 'email', 'rfid']
+        fields = ['teacher_id', 'teacher_name', 'email', 'rfid', 'phone', 'years', 'programs']
         read_only_fields = ['teacher_id']
 
 
@@ -37,7 +40,7 @@ class CourseSerializer(serializers.ModelSerializer):
     """Serializer for Course model CRUD operations"""
     class Meta:
         model = Course
-        fields = ['course_id', 'course_name']
+        fields = ['course_id', 'course_code', 'course_name']
         read_only_fields = ['course_id']
 
 
@@ -269,3 +272,51 @@ class QRScanSerializer(serializers.Serializer):
     """Serializer for QR scan requests"""
     qr_token = serializers.CharField(required=True)
     student_id = serializers.IntegerField(required=True)
+
+
+# ============ Admin Dashboard Attendance Serializers ============
+
+class StudentCourseSummarySerializer(serializers.Serializer):
+    """Per-course attendance summary for one student (used in student-wise view)."""
+    course_id = serializers.IntegerField()
+    course_code = serializers.CharField()
+    course_name = serializers.CharField()
+    teacher_name = serializers.CharField()
+    classes_attended_list = serializers.ListField(child=serializers.CharField())
+    attended = serializers.IntegerField()
+    total_sessions = serializers.IntegerField()
+    percent = serializers.FloatField()
+
+
+class StudentAttendanceSummarySerializer(serializers.Serializer):
+    """Full attendance summary for a single student across all enrolled courses."""
+    student_id = serializers.IntegerField()
+    name = serializers.CharField()
+    rfid = serializers.CharField()
+    year = serializers.IntegerField()
+    program = serializers.CharField()
+    section = serializers.CharField()
+    email = serializers.CharField()
+    overall_attendance = serializers.FloatField()
+    courses = StudentCourseSummarySerializer(many=True)
+
+
+class CourseStudentAttendanceSerializer(serializers.Serializer):
+    """Per-student attendance entry for a course (used in course-wise view)."""
+    student_id = serializers.IntegerField()
+    roll = serializers.CharField()       # rfid used as roll number
+    name = serializers.CharField()
+    year = serializers.IntegerField()
+    program = serializers.CharField()    # dept
+    section = serializers.CharField()
+    attended = serializers.IntegerField()
+    total_sessions = serializers.IntegerField()
+    percent = serializers.FloatField()
+
+
+class CourseAttendanceSummarySerializer(serializers.Serializer):
+    """Attendance summary for all students enrolled in a given course."""
+    course_id = serializers.IntegerField()
+    course_code = serializers.CharField()
+    course_name = serializers.CharField()
+    students = CourseStudentAttendanceSerializer(many=True)

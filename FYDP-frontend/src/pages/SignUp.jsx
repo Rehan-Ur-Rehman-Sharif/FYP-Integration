@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import "../styles/auth.css";
+import summaryApi from "../common/index";
 
 const Signup = () => {
   const [role, setRole] = useState("");
@@ -18,7 +19,7 @@ const Signup = () => {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
-  const handleSignup = () => {
+  const handleSignup = async () => {
     if (!role) {
       alert("Please select a role");
       return;
@@ -29,13 +30,43 @@ const Signup = () => {
       return;
     }
 
+    // Map frontend roles to backend roles
+    const backendRole =
+      role === "admin" ? "admin" :
+      role === "eventAdmin" ? "management" :
+      "student"; // participant -> student (closest match)
+
+    // ── Try backend API ──────────────────────────────────────────────
+    try {
+      const response = await fetch(summaryApi.signUp.url, {
+        method: summaryApi.signUp.method.toUpperCase(),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role: backendRole,
+          name: form.name,
+          email: form.email,
+          password: form.password,
+          university: form.university,
+          department: form.department,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        alert(`Signup failed: ${err.error || response.statusText}`);
+        return;
+      }
+    } catch (_error) { // API unreachable – use offline fallback
+      // API unreachable – fall through to localStorage only
+    }
+
+    // ── Always persist locally (offline support / static dev) ────────
     const newUser = {
       role,
       ...form,
       createdAt: new Date().toISOString()
     };
 
-    // save based on role
     const key =
       role === "admin"
         ? "admins"
