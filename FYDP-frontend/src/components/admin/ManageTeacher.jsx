@@ -106,6 +106,10 @@ const ManageTeachers = ({ programs = [], years = [] }) => {
           email: form.email,
           password: form.id, // default password = teacher ID
           id: form.id,
+          phone: form.phone,
+          years: form.years,
+          programs: form.programs,
+          courses: form.courses,
         }),
       });
 
@@ -114,7 +118,7 @@ const ManageTeachers = ({ programs = [], years = [] }) => {
         alert(`Registration failed: ${err.error || response.statusText}`);
         return;
       }
-    } catch (_) {
+    } catch (_error) { // API unreachable – use offline fallback
       // API unreachable – fall through to localStorage only
     }
 
@@ -137,20 +141,51 @@ const ManageTeachers = ({ programs = [], years = [] }) => {
   };
 
   /* ======================
-     SEARCH
+     SEARCH – tries backend, falls back to localStorage
   ====================== */
-  const handleSearch = () => {
+  const handleSearch = async () => {
     if (!filterYear || !filterProgram) {
       alert("Select Year & Program");
       return;
     }
 
+    // ── Try backend API ──────────────────────────────────────────────
+    try {
+      const token = localStorage.getItem("accessToken");
+      const url = `${summaryApi.teachers.url}?year=${encodeURIComponent(filterYear)}&program=${encodeURIComponent(filterProgram)}`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        // Map backend fields to frontend table shape
+        const mapped = data.map(t => ({
+          id: t.rfid,
+          name: t.teacher_name,
+          email: t.email || "",
+          phone: t.phone || "",
+          years: t.years ? t.years.split(",").map(y => y.trim()).filter(Boolean) : [],
+          programs: t.programs ? t.programs.split(",").map(p => p.trim()).filter(Boolean) : [],
+          department: admin.department || "N/A",
+          courses: []
+        }));
+        setFilteredTeachers(mapped);
+        return;
+      }
+    } catch (_error) { // API unreachable – use offline fallback
+      // API unreachable – fall through to localStorage
+    }
+
+    // ── Fallback: filter from localStorage ───────────────────────────
     const result = teachers.filter(
       t =>
         t.years.includes(filterYear) &&
         t.programs.includes(filterProgram)
     );
-
     setFilteredTeachers(result);
   };
 

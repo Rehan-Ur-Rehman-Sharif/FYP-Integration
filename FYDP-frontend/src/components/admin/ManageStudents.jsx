@@ -83,7 +83,7 @@ const ManageStudents = ({ years, programs, onRegister }) => {
         alert(`Registration failed: ${err.error || response.statusText}`);
         return;
       }
-    } catch (_) {
+    } catch (_error) { // API unreachable – use offline fallback
       // API unreachable – fall through to localStorage only
     }
 
@@ -161,12 +161,43 @@ const ManageStudents = ({ years, programs, onRegister }) => {
     setShowBulkModal(false);
   };
 
-  // Filter students by year & program
-  const handleFilter = () => {
+  // Filter students by year & program – tries backend, falls back to localStorage
+  const handleFilter = async () => {
     if (!filterYear || !filterProgram) {
       alert("Please select both Year and Program");
       return;
     }
+
+    // ── Try backend API ──────────────────────────────────────────────
+    try {
+      const token = localStorage.getItem("accessToken");
+      const url = `${summaryApi.students.url}?year=${encodeURIComponent(filterYear)}&program=${encodeURIComponent(filterProgram)}`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        // Map backend fields to the frontend table shape
+        const mapped = data.map(s => ({
+          id: s.rfid,
+          name: s.student_name,
+          year: String(s.year),
+          program: s.program || s.dept,
+          email: s.email || "",
+          courses: [] // courses are managed separately in the backend
+        }));
+        setFilteredStudents(mapped);
+        return;
+      }
+    } catch (_error) { // API unreachable – use offline fallback
+      // API unreachable – fall through to localStorage
+    }
+
+    // ── Fallback: filter from localStorage ───────────────────────────
     const result = allStudents.filter(
       s => s.year === filterYear && s.program === filterProgram
     );

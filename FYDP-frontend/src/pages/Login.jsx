@@ -59,7 +59,7 @@ const Login = () => {
         navigate(`/${result.user_type === "admin" ? "admin" : result.user_type}`);
         return;
       }
-    } catch (_) {
+    } catch (_error) { // API unreachable – use offline fallback
       // API unreachable – fall through to localStorage fallback
     }
 

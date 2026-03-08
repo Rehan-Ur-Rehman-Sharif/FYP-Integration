@@ -1635,3 +1635,316 @@ class UserLogoutTestCase(APITestCase):
     def test_unauthenticated_logout_denied(self):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+# ============ Tests for Student Registration with Courses ============
+
+class StudentRegistrationWithCoursesTestCase(APITestCase):
+    """Tests for course handling in the unified student registration endpoint."""
+
+    def setUp(self):
+        self.url = reverse('unified-signup')
+
+    def test_student_signup_with_courses_creates_course_objects(self):
+        """Courses field 'CS301: Database, CS401: Algo' should create Course objects."""
+        response = self.client.post(self.url, {
+            'role': 'student',
+            'name': 'Course Student',
+            'email': 'cstudent@test.com',
+            'password': 'Pass123!',
+            'id': 'ROLL_CS',
+            'year': '2',
+            'program': 'CS',
+            'courses': 'CS301: Database Management, CS401: Distributed Systems',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(len(response.data['courses']), 2)
+        # Verify Course objects were created
+        from core.models import Course
+        self.assertTrue(Course.objects.filter(course_code='CS301').exists())
+        self.assertTrue(Course.objects.filter(course_code='CS401').exists())
+
+    def test_student_signup_without_courses(self):
+        """Student signup without courses should still succeed."""
+        response = self.client.post(self.url, {
+            'role': 'student',
+            'name': 'NoCourse Student',
+            'email': 'nocourse@test.com',
+            'password': 'Pass123!',
+            'id': 'ROLL_NC',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['courses'], [])
+
+    def test_student_signup_reuses_existing_course(self):
+        """Registering two students with the same course code doesn't create duplicates."""
+        from core.models import Course
+        Course.objects.create(course_code='CS501', course_name='Algorithms')
+
+        self.client.post(self.url, {
+            'role': 'student',
+            'name': 'First Student',
+            'email': 's1@test.com',
+            'password': 'Pass123!',
+            'id': 'ROLL_S1',
+            'courses': 'CS501: Algorithms',
+        }, format='json')
+        # Only one CS501 course should exist
+        self.assertEqual(Course.objects.filter(course_code='CS501').count(), 1)
+
+
+# ============ Tests for Teacher Registration with Phone/Years/Programs/Courses ============
+
+class TeacherRegistrationFullDataTestCase(APITestCase):
+    """Tests for phone, years, programs, courses in teacher registration."""
+
+    def setUp(self):
+        self.url = reverse('unified-signup')
+
+    def test_teacher_signup_saves_phone_years_programs(self):
+        """Teacher signup should persist phone, years, programs."""
+        response = self.client.post(self.url, {
+            'role': 'teacher',
+            'name': 'Prof. Ahmad',
+            'email': 'ahmad@test.com',
+            'password': 'Pass123!',
+            'id': 'TCH_AHMAD',
+            'phone': '03001234567',
+            'years': '1,2',
+            'programs': 'CS,IT',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['phone'], '03001234567')
+        self.assertEqual(response.data['years'], '1,2')
+        self.assertEqual(response.data['programs'], 'CS,IT')
+        # Verify in DB
+        from core.models import Teacher
+        t = Teacher.objects.get(email='ahmad@test.com')
+        self.assertEqual(t.phone, '03001234567')
+        self.assertEqual(t.years, '1,2')
+        self.assertEqual(t.programs, 'CS,IT')
+
+    def test_teacher_signup_with_courses_creates_taught_courses(self):
+        """Teacher signup with courses should create Course + TaughtCourse objects."""
+        from core.models import TaughtCourse
+        response = self.client.post(self.url, {
+            'role': 'teacher',
+            'name': 'Dr. Khan',
+            'email': 'khan@test.com',
+            'password': 'Pass123!',
+            'id': 'TCH_KHAN',
+            'courses': 'CS601: Compiler Design, CS701: AI',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(len(response.data['courses']), 2)
+        from core.models import Teacher
+        teacher = Teacher.objects.get(email='khan@test.com')
+        self.assertEqual(TaughtCourse.objects.filter(teacher=teacher).count(), 2)
+
+    def test_teacher_signup_without_optional_fields(self):
+        """Teacher signup without phone/years/programs should use defaults."""
+        response = self.client.post(self.url, {
+            'role': 'teacher',
+            'name': 'Basic Teacher',
+            'email': 'basic@test.com',
+            'password': 'Pass123!',
+            'id': 'TCH_BASIC',
+        }, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['phone'], '')
+        self.assertEqual(response.data['years'], '')
+        self.assertEqual(response.data['programs'], '')
+
+
+# ============ Tests for Student Filtering via Backend ============
+
+class StudentFilterTestCase(APITestCase):
+    """Tests for GET /api/students/?year=X&program=Y filtering."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='admin_u', password='Pass123!')
+        self.client.force_authenticate(user=self.user)
+
+        Student.objects.create(student_name='Alice', rfid='A001', year=1, dept='CS', section='A', email='alice@t.com')
+        Student.objects.create(student_name='Bob',   rfid='B001', year=1, dept='IT', section='A', email='bob@t.com')
+        Student.objects.create(student_name='Carol', rfid='C001', year=2, dept='CS', section='B', email='carol@t.com')
+
+    def test_filter_by_year(self):
+        response = self.client.get('/api/students/?year=1')
+        self.assertEqual(response.status_code, 200)
+        names = [s['student_name'] for s in response.data]
+        self.assertIn('Alice', names)
+        self.assertIn('Bob', names)
+        self.assertNotIn('Carol', names)
+
+    def test_filter_by_program(self):
+        """Frontend sends 'program'; backend maps it to 'dept'."""
+        response = self.client.get('/api/students/?program=CS')
+        self.assertEqual(response.status_code, 200)
+        names = [s['student_name'] for s in response.data]
+        self.assertIn('Alice', names)
+        self.assertIn('Carol', names)
+        self.assertNotIn('Bob', names)
+
+    def test_filter_by_year_and_program(self):
+        response = self.client.get('/api/students/?year=1&program=CS')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]['student_name'], 'Alice')
+
+    def test_response_includes_program_alias(self):
+        """StudentSerializer must return a 'program' field (alias for dept)."""
+        response = self.client.get('/api/students/?year=1&program=CS')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('program', response.data[0])
+        self.assertEqual(response.data[0]['program'], 'CS')
+
+
+# ============ Tests for Teacher Filtering via Backend ============
+
+class TeacherFilterTestCase(APITestCase):
+    """Tests for GET /api/teachers/?year=X&program=Y filtering."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='admin_t', password='Pass123!')
+        self.client.force_authenticate(user=self.user)
+
+        Teacher.objects.create(teacher_name='Prof. Smith', rfid='TS01', years='1,2', programs='CS,IT', email='smith@t.com')
+        Teacher.objects.create(teacher_name='Dr. Jones',   rfid='TJ01', years='3,4', programs='IT,DS', email='jones@t.com')
+        Teacher.objects.create(teacher_name='Mr. Ali',     rfid='TA01', years='1',   programs='CS',    email='ali@t.com')
+
+    def test_filter_by_year(self):
+        response = self.client.get('/api/teachers/?year=1')
+        self.assertEqual(response.status_code, 200)
+        names = [t['teacher_name'] for t in response.data]
+        self.assertIn('Prof. Smith', names)
+        self.assertIn('Mr. Ali', names)
+        self.assertNotIn('Dr. Jones', names)
+
+    def test_filter_by_program(self):
+        response = self.client.get('/api/teachers/?program=DS')
+        self.assertEqual(response.status_code, 200)
+        names = [t['teacher_name'] for t in response.data]
+        self.assertIn('Dr. Jones', names)
+        self.assertNotIn('Prof. Smith', names)
+
+    def test_filter_by_year_and_program(self):
+        response = self.client.get('/api/teachers/?year=1&program=CS')
+        self.assertEqual(response.status_code, 200)
+        names = [t['teacher_name'] for t in response.data]
+        self.assertIn('Prof. Smith', names)
+        self.assertIn('Mr. Ali', names)
+        self.assertNotIn('Dr. Jones', names)
+
+    def test_response_includes_phone_years_programs(self):
+        """TeacherSerializer must return phone, years, programs."""
+        response = self.client.get('/api/teachers/')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('phone', response.data[0])
+        self.assertIn('years', response.data[0])
+        self.assertIn('programs', response.data[0])
+
+
+# ============ Tests for Attendance Summary Endpoints ============
+
+class StudentAttendanceSummaryTestCase(APITestCase):
+    """Tests for GET /api/attendance/student/?rfid=X"""
+
+    def setUp(self):
+        self.url = reverse('attendance-student-summary')
+        self.user = User.objects.create_user(username='mgmt_att', password='Pass123!')
+        self.client.force_authenticate(user=self.user)
+
+        self.teacher = Teacher.objects.create(teacher_name='Prof. A', rfid='T_ATT', email='att_t@t.com')
+        self.course = Course.objects.create(course_code='CS101', course_name='Intro CS')
+        self.student = Student.objects.create(
+            student_name='Test Stu', rfid='ROLL001', year=1, dept='CS', section='A', email='ts@t.com'
+        )
+        # Create a StudentCourse with 2 classes attended out of 3 sessions
+        self.sc = StudentCourse.objects.create(
+            student=self.student,
+            course=self.course,
+            teacher=self.teacher,
+            classes_attended='2024-01-01, 2024-01-08'
+        )
+        # Create 3 sessions so total_sessions=3
+        import secrets
+        for i in range(3):
+            AttendanceSession.objects.create(
+                teacher=self.teacher, course=self.course,
+                section='A', year=1,
+                qr_code_token=secrets.token_urlsafe(16) + str(i),
+                status='stopped'
+            )
+
+    def test_summary_by_rfid(self):
+        response = self.client.get(f'{self.url}?rfid=ROLL001')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['rfid'], 'ROLL001')
+        self.assertEqual(response.data['name'], 'Test Stu')
+        self.assertEqual(len(response.data['courses']), 1)
+        course_info = response.data['courses'][0]
+        self.assertEqual(course_info['course_code'], 'CS101')
+        self.assertEqual(course_info['attended'], 2)
+        self.assertEqual(course_info['total_sessions'], 3)
+
+    def test_missing_rfid_returns_400(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 400)
+
+    def test_nonexistent_rfid_returns_404(self):
+        response = self.client.get(f'{self.url}?rfid=NONEXISTENT')
+        self.assertEqual(response.status_code, 404)
+
+    def test_unauthenticated_denied(self):
+        self.client.force_authenticate(user=None)
+        response = self.client.get(f'{self.url}?rfid=ROLL001')
+        self.assertEqual(response.status_code, 401)
+
+
+class CourseAttendanceSummaryTestCase(APITestCase):
+    """Tests for GET /api/attendance/course/?course_code=X"""
+
+    def setUp(self):
+        self.url = reverse('attendance-course-summary')
+        self.user = User.objects.create_user(username='mgmt_cat', password='Pass123!')
+        self.client.force_authenticate(user=self.user)
+
+        self.teacher = Teacher.objects.create(teacher_name='Prof. B', rfid='T_CAT', email='cat_t@t.com')
+        self.course = Course.objects.create(course_code='IT201', course_name='Networks')
+        self.s1 = Student.objects.create(student_name='Stu One', rfid='S_ONE', year=2, dept='IT', section='A', email='s1@t.com')
+        self.s2 = Student.objects.create(student_name='Stu Two', rfid='S_TWO', year=2, dept='IT', section='A', email='s2@t.com')
+
+        StudentCourse.objects.create(student=self.s1, course=self.course, teacher=self.teacher, classes_attended='2024-01-01')
+        StudentCourse.objects.create(student=self.s2, course=self.course, teacher=self.teacher, classes_attended='')
+
+        import secrets
+        for i in range(2):
+            AttendanceSession.objects.create(
+                teacher=self.teacher, course=self.course,
+                section='A', year=2,
+                qr_code_token=secrets.token_urlsafe(16) + str(i),
+                status='stopped'
+            )
+
+    def test_course_summary_by_code(self):
+        response = self.client.get(f'{self.url}?course_code=IT201')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['course_code'], 'IT201')
+        self.assertEqual(len(response.data['students']), 2)
+
+        stu_one = next(s for s in response.data['students'] if s['roll'] == 'S_ONE')
+        self.assertEqual(stu_one['attended'], 1)
+        self.assertEqual(stu_one['total_sessions'], 2)
+        self.assertAlmostEqual(stu_one['percent'], 50.0)
+
+        stu_two = next(s for s in response.data['students'] if s['roll'] == 'S_TWO')
+        self.assertEqual(stu_two['attended'], 0)
+
+    def test_missing_params_returns_400(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 400)
+
+    def test_nonexistent_course_returns_404(self):
+        response = self.client.get(f'{self.url}?course_code=XXXX')
+        self.assertEqual(response.status_code, 404)

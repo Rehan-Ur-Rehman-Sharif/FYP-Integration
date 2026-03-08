@@ -33,6 +33,8 @@ from .views import (
     UnifiedSignupView,
     UserDetailsView,
     UserLogoutView,
+    StudentAttendanceSummaryView,
+    CourseAttendanceSummaryView,
 )
 
 # Create a router for CRUD ViewSets
@@ -70,6 +72,10 @@ urlpatterns = [
     # Attendance scanning endpoints
     path('attendance/rfid-scan/', RFIDScanView.as_view(), name='rfid-scan'),
     path('attendance/qr-scan/', QRScanView.as_view(), name='qr-scan'),
+
+    # Admin dashboard attendance summary endpoints
+    path('attendance/student/', StudentAttendanceSummaryView.as_view(), name='attendance-student-summary'),
+    path('attendance/course/', CourseAttendanceSummaryView.as_view(), name='attendance-course-summary'),
     
     # API Registration endpoints
     path('auth/register/student/', StudentRegistrationView.as_view(), name='student-register'),

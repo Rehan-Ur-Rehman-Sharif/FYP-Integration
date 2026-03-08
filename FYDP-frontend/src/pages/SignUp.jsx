@@ -56,7 +56,7 @@ const Signup = () => {
         alert(`Signup failed: ${err.error || response.statusText}`);
         return;
       }
-    } catch (_) {
+    } catch (_error) { // API unreachable – use offline fallback
       // API unreachable – fall through to localStorage only
     }
 
