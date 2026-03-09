@@ -9,22 +9,34 @@ from .models import (
 
 # ============ Model Serializers for CRUD operations ============
 
+class StudentCourseInlineSerializer(serializers.ModelSerializer):
+    """Inline courses for StudentSerializer"""
+    course_id = serializers.IntegerField(source='course.course_id', read_only=True)
+    course_code = serializers.CharField(source='course.course_code', read_only=True)
+    course_name = serializers.CharField(source='course.course_name', read_only=True)
+
+    class Meta:
+        model = StudentCourse
+        fields = ['id', 'course_id', 'course_code', 'course_name', 'classes_attended']
+
+
 class StudentSerializer(serializers.ModelSerializer):
     """Serializer for Student model CRUD operations"""
     # 'program' is a frontend-friendly alias for the 'dept' field
     program = serializers.CharField(source='dept', read_only=True)
+    courses = StudentCourseInlineSerializer(source='student_courses', many=True, read_only=True)
 
     class Meta:
         model = Student
-        fields = ['student_id', 'student_name', 'email', 'rfid', 'overall_attendance', 'year', 'dept', 'program', 'section']
-        read_only_fields = ['student_id', 'program']
+        fields = ['student_id', 'student_name', 'email', 'rfid', 'overall_attendance', 'year', 'dept', 'program', 'section', 'management', 'courses']
+        read_only_fields = ['student_id', 'program', 'courses']
 
 
 class TeacherSerializer(serializers.ModelSerializer):
     """Serializer for Teacher model CRUD operations"""
     class Meta:
         model = Teacher
-        fields = ['teacher_id', 'teacher_name', 'email', 'rfid', 'phone', 'years', 'programs']
+        fields = ['teacher_id', 'teacher_name', 'email', 'rfid', 'phone', 'years', 'programs', 'management']
         read_only_fields = ['teacher_id']
 
 

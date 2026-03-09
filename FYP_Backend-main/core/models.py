@@ -21,6 +21,7 @@ class Student(models.Model):
     year = models.IntegerField()  # e.g., 1, 2, 3, 4
     dept = models.CharField(max_length=100)  # e.g., CS, IT
     section = models.CharField(max_length=10)  # e.g., A, B, C
+    management = models.ForeignKey('Management', on_delete=models.SET_NULL, null=True, blank=True, related_name='students')
 
     def __str__(self):
         return self.student_name
@@ -45,6 +46,7 @@ class Teacher(models.Model):
     phone = models.CharField(max_length=20, blank=True, default='')
     years = models.CharField(max_length=255, blank=True, default='')     # comma-separated, e.g. "1,2,3"
     programs = models.CharField(max_length=255, blank=True, default='')  # comma-separated, e.g. "CS,IT"
+    management = models.ForeignKey('Management', on_delete=models.SET_NULL, null=True, blank=True, related_name='teachers')
 
     def __str__(self):
         return self.teacher_name
@@ -71,7 +73,7 @@ class TaughtCourse(models.Model):
 class StudentCourse(models.Model):
     student = models.ForeignKey('Student', on_delete=models.CASCADE, related_name='student_courses')
     course = models.ForeignKey('Course', on_delete=models.CASCADE, related_name='student_courses')
-    teacher = models.ForeignKey('Teacher', on_delete=models.CASCADE, related_name='student_courses')
+    teacher = models.ForeignKey('Teacher', on_delete=models.SET_NULL, null=True, blank=True, related_name='student_courses')
     classes_attended = models.CharField(max_length=255, blank=True)  # e.g., "Class A, Class B"
 
     def __str__(self):

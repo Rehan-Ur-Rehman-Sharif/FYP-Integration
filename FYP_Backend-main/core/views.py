@@ -179,11 +179,21 @@ class UnifiedSignupView(APIView):
 
         user = User.objects.create_user(username=email, email=email, password=password)
 
+        # Resolve the management instance that is registering this user.
+        # Priority: authenticated requesting user's management profile > explicit management_id param.
+        management = None
+        if request.user and request.user.is_authenticated:
+            management = Management.objects.filter(user=request.user).first()
+        if not management:
+            mgmt_id = request.data.get('management_id', '')
+            if mgmt_id:
+                management = Management.objects.filter(pk=mgmt_id).first()
+
         try:
             if role == 'student':
-                return self._register_student(request, user, name, email)
+                return self._register_student(request, user, name, email, management)
             elif role == 'teacher':
-                return self._register_teacher(request, user, name, email)
+                return self._register_teacher(request, user, name, email, management)
             else:  # admin or management
                 return self._register_management(request, user, name, email)
         except Exception as e:
@@ -212,16 +222,17 @@ class UnifiedSignupView(APIView):
                 cname = item
 
             if code:
-                course, _ = Course.objects.get_or_create(
-                    course_code=code,
-                    defaults={'course_name': cname or code}
-                )
+                course = Course.objects.filter(course_code=code).first()
+                if not course:
+                    course = Course.objects.create(course_code=code, course_name=cname or code)
             else:
-                course, _ = Course.objects.get_or_create(course_name=cname)
-            created_courses.append({'course_code': course.course_code, 'course_name': course.course_name})
+                course = Course.objects.filter(course_name=cname).first()
+                if not course:
+                    course = Course.objects.create(course_code='', course_name=cname)
+            created_courses.append({'course_id': course.course_id, 'course_code': course.course_code, 'course_name': course.course_name})
         return created_courses
 
-    def _register_student(self, request, user, name, email):
+    def _register_student(self, request, user, name, email, management=None):
         rfid = request.data.get('id', '').strip() or f'S{user.id}'
         if Student.objects.filter(rfid=rfid).exists():
             rfid = f'{rfid}_{user.id}'
@@ -247,10 +258,62 @@ class UnifiedSignupView(APIView):
             year=year_int,
             dept=dept,
             section=section,
+            management=management,
         )
 
-        # Handle courses: "CS301: Database, CS401: Algo" – create Course objects if needed
-        created_courses = self._parse_and_create_courses(request.data.get('courses', '').strip())
+        # Handle courses: create Course + StudentCourse entries
+        created_courses = []
+        for course_info in self._parse_and_create_courses(request.data.get('courses', '').strip()):
+            course = Course.objects.filter(pk=course_info['course_id']).first()
+            if course:
+                # 1st priority: same management + course + section + year + dept/year match
+                taught = TaughtCourse.objects.filter(
+                    course=course,
+                    section=student.section,
+                    year=student.year,
+                    teacher__programs__icontains=student.dept,
+                    teacher__years__icontains=str(student.year),
+                    **({'teacher__management': management} if management else {}),
+                ).first()
+                # 2nd priority: same management + course + section/year
+                if not taught and management:
+                    taught = TaughtCourse.objects.filter(
+                        course=course,
+                        section=student.section,
+                        year=student.year,
+                        teacher__management=management,
+                    ).first()
+                # 3rd priority: same management + course + dept/year match (diff section)
+                if not taught and management:
+                    taught = TaughtCourse.objects.filter(
+                        course=course,
+                        teacher__programs__icontains=student.dept,
+                        teacher__years__icontains=str(student.year),
+                        teacher__management=management,
+                    ).first()
+                # 4th priority (no management context): course + section/year + dept/year match
+                if not taught:
+                    taught = TaughtCourse.objects.filter(
+                        course=course,
+                        section=student.section,
+                        year=student.year,
+                        teacher__programs__icontains=student.dept,
+                        teacher__years__icontains=str(student.year),
+                    ).first()
+                # 5th priority: course + section/year only
+                if not taught:
+                    taught = TaughtCourse.objects.filter(
+                        course=course,
+                        section=student.section,
+                        year=student.year,
+                    ).first()
+                teacher = taught.teacher if taught else None
+                StudentCourse.objects.get_or_create(
+                    student=student,
+                    course=course,
+                    defaults={'teacher': teacher, 'classes_attended': ''}
+                )
+                created_courses.append(course_info)
 
         return Response({
             'message': 'Student registered successfully',
@@ -261,7 +324,7 @@ class UnifiedSignupView(APIView):
             'courses': created_courses,
         }, status=status.HTTP_201_CREATED)
 
-    def _register_teacher(self, request, user, name, email):
+    def _register_teacher(self, request, user, name, email, management=None):
         rfid = request.data.get('id', '').strip() or f'T{user.id}'
         if Teacher.objects.filter(rfid=rfid).exists():
             rfid = f'{rfid}_{user.id}'
@@ -278,19 +341,20 @@ class UnifiedSignupView(APIView):
             phone=phone,
             years=years_raw,
             programs=programs_raw,
+            management=management,
         )
 
         # Handle courses: create Course + TaughtCourse entries
         created_courses = []
         for course_info in self._parse_and_create_courses(request.data.get('courses', '').strip()):
-            course = Course.objects.get(course_code=course_info['course_code']) if course_info['course_code'] \
-                else Course.objects.get(course_name=course_info['course_name'])
-            TaughtCourse.objects.get_or_create(
-                teacher=teacher,
-                course=course,
-                defaults={'classes_taken': '0'}
-            )
-            created_courses.append(course_info)
+            course = Course.objects.filter(pk=course_info['course_id']).first()
+            if course:
+                TaughtCourse.objects.get_or_create(
+                    teacher=teacher,
+                    course=course,
+                    defaults={'classes_taken': '0'}
+                )
+                created_courses.append(course_info)
 
         return Response({
             'message': 'Teacher registered successfully',
@@ -402,7 +466,7 @@ class StudentViewSet(viewsets.ModelViewSet):
     - PATCH /students/{id}/ - Partial update a student
     - DELETE /students/{id}/ - Delete a student
     """
-    queryset = Student.objects.all()
+    queryset = Student.objects.prefetch_related('student_courses__course', 'student_courses__teacher').all()
     serializer_class = StudentSerializer
     permission_classes = [IsAuthenticated]
 
