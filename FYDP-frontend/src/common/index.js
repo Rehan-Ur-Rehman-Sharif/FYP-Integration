@@ -34,6 +34,15 @@ const summaryApi={
     courseAttendance:{
         url: `${backendDomain}/api/attendance/course/`,
         method: "get"
+    },
+    // Bulk CSV upload endpoints
+    bulkUploadStudents:{
+        url: `${backendDomain}/api/bulk-upload/students/`,
+        method: "post"
+    },
+    bulkUploadTeachers:{
+        url: `${backendDomain}/api/bulk-upload/teachers/`,
+        method: "post"
     }
 }
 

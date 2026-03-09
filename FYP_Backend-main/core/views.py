@@ -12,11 +12,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework_simplejwt.tokens import RefreshToken
-import qrcode
+import csv
 import io
 import base64
 import secrets
+import qrcode
 from .serializers import (
     StudentRegistrationSerializer,
     TeacherRegistrationSerializer,
@@ -452,6 +454,290 @@ class UserLogoutView(APIView):
 
     def get(self, request):
         return Response({'message': 'Logged out successfully'}, status=status.HTTP_200_OK)
+
+
+# ============ Bulk CSV Upload Endpoints ============
+
+class BulkStudentUploadView(APIView):
+    """
+    Bulk-insert students from a CSV file.
+
+    POST /api/bulk-upload/students/
+    Content-Type: multipart/form-data
+    Field: file (CSV)
+
+    Required CSV columns : name, email, id, password
+    Optional CSV columns : year, program, section, courses
+
+    The ``courses`` column uses semicolons to separate individual course
+    entries, because commas are already the CSV field delimiter.
+    Example courses value: ``CS301: Database Systems; CS401: Algorithms``
+
+    Returns a summary object with per-row success/error details.
+    """
+    permission_classes = [AllowAny]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        csv_file = request.FILES.get('file')
+        if not csv_file:
+            return Response({'error': 'No file provided. Send the CSV as form-data field "file".'}, status=status.HTTP_400_BAD_REQUEST)
+        if not csv_file.name.lower().endswith('.csv'):
+            return Response({'error': 'Uploaded file must have a .csv extension.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            decoded = csv_file.read().decode('utf-8-sig')  # handle optional BOM
+            reader = csv.DictReader(io.StringIO(decoded))
+        except Exception as exc:
+            return Response({'error': f'Could not parse CSV: {exc}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Resolve the management context of the requesting user
+        management = None
+        if request.user and request.user.is_authenticated:
+            management = Management.objects.filter(user=request.user).first()
+        if not management:
+            mgmt_id = request.data.get('management_id', '')
+            if mgmt_id:
+                management = Management.objects.filter(pk=mgmt_id).first()
+
+        results = []
+        for row_num, row in enumerate(reader, start=2):
+            name = row.get('name', '').strip()
+            email = row.get('email', '').strip()
+            password = row.get('password', '').strip()
+            rfid = row.get('id', '').strip()
+
+            row_result = {'row': row_num, 'name': name, 'email': email}
+
+            if not name or not email or not password:
+                row_result.update(status='error', error='name, email and password are required')
+                results.append(row_result)
+                continue
+
+            if User.objects.filter(email=email).exists():
+                row_result.update(status='error', error='Email already exists')
+                results.append(row_result)
+                continue
+
+            user = None
+            try:
+                user = User.objects.create_user(username=email, email=email, password=password)
+
+                if not rfid:
+                    rfid = f'S{user.id}'
+                if Student.objects.filter(rfid=rfid).exists():
+                    rfid = f'{rfid}_{user.id}'
+
+                try:
+                    year_int = int(row.get('year', '1').strip())
+                except (ValueError, TypeError):
+                    year_int = 1
+
+                dept = (row.get('program', '').strip() or row.get('dept', '').strip() or '')
+                section = row.get('section', '').strip() or 'A'
+
+                student = Student.objects.create(
+                    user=user,
+                    email=email,
+                    student_name=name,
+                    rfid=rfid,
+                    year=year_int,
+                    dept=dept,
+                    section=section,
+                    management=management,
+                )
+
+                # Parse courses – semicolons separate entries in the CSV column
+                # because commas are the CSV field delimiter. _parse_and_create_courses
+                # expects comma-separated entries, so normalise the separator here.
+                courses_raw = row.get('courses', '').strip().replace(';', ',')
+                created_courses = []
+                for course_info in UnifiedSignupView._parse_and_create_courses(courses_raw):
+                    course = Course.objects.filter(pk=course_info['course_id']).first()
+                    if not course:
+                        continue
+                    # Priority-based teacher matching (mirrors UnifiedSignupView)
+                    taught = TaughtCourse.objects.filter(
+                        course=course,
+                        section=student.section,
+                        year=student.year,
+                        teacher__programs__icontains=student.dept,
+                        teacher__years__icontains=str(student.year),
+                        **({'teacher__management': management} if management else {}),
+                    ).first()
+                    if not taught and management:
+                        taught = TaughtCourse.objects.filter(
+                            course=course,
+                            section=student.section,
+                            year=student.year,
+                            teacher__management=management,
+                        ).first()
+                    if not taught:
+                        taught = TaughtCourse.objects.filter(
+                            course=course,
+                            section=student.section,
+                            year=student.year,
+                        ).first()
+                    teacher = taught.teacher if taught else None
+                    StudentCourse.objects.get_or_create(
+                        student=student,
+                        course=course,
+                        defaults={'teacher': teacher, 'classes_attended': ''},
+                    )
+                    created_courses.append(course_info)
+
+                row_result.update(
+                    status='success',
+                    student_id=student.student_id,
+                    courses_added=len(created_courses),
+                )
+            except Exception as exc:
+                if user is not None:
+                    try:
+                        user.delete()
+                    except Exception:
+                        pass
+                row_result.update(status='error', error=str(exc))
+
+            results.append(row_result)
+
+        success_count = sum(1 for r in results if r['status'] == 'success')
+        error_count = len(results) - success_count
+        return Response({
+            'total': len(results),
+            'success': success_count,
+            'errors': error_count,
+            'results': results,
+        }, status=status.HTTP_200_OK)
+
+
+class BulkTeacherUploadView(APIView):
+    """
+    Bulk-insert teachers from a CSV file.
+
+    POST /api/bulk-upload/teachers/
+    Content-Type: multipart/form-data
+    Field: file (CSV)
+
+    Required CSV columns : name, email, id, password
+    Optional CSV columns : phone, years, programs, courses
+
+    The ``courses`` column uses semicolons to separate individual course
+    entries, because commas are already the CSV field delimiter.
+    Example courses value: ``CS301: Database Systems; CS401: Algorithms``
+
+    The ``years`` and ``programs`` columns are comma-separated values stored
+    as strings in the Teacher model (e.g. ``1,2,3`` or ``CS,IT``).
+
+    Returns a summary object with per-row success/error details.
+    """
+    permission_classes = [AllowAny]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        csv_file = request.FILES.get('file')
+        if not csv_file:
+            return Response({'error': 'No file provided. Send the CSV as form-data field "file".'}, status=status.HTTP_400_BAD_REQUEST)
+        if not csv_file.name.lower().endswith('.csv'):
+            return Response({'error': 'Uploaded file must have a .csv extension.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            decoded = csv_file.read().decode('utf-8-sig')
+            reader = csv.DictReader(io.StringIO(decoded))
+        except Exception as exc:
+            return Response({'error': f'Could not parse CSV: {exc}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Resolve the management context of the requesting user
+        management = None
+        if request.user and request.user.is_authenticated:
+            management = Management.objects.filter(user=request.user).first()
+        if not management:
+            mgmt_id = request.data.get('management_id', '')
+            if mgmt_id:
+                management = Management.objects.filter(pk=mgmt_id).first()
+
+        results = []
+        for row_num, row in enumerate(reader, start=2):
+            name = row.get('name', '').strip()
+            email = row.get('email', '').strip()
+            password = row.get('password', '').strip()
+            rfid = row.get('id', '').strip()
+
+            row_result = {'row': row_num, 'name': name, 'email': email}
+
+            if not name or not email or not password:
+                row_result.update(status='error', error='name, email and password are required')
+                results.append(row_result)
+                continue
+
+            if User.objects.filter(email=email).exists():
+                row_result.update(status='error', error='Email already exists')
+                results.append(row_result)
+                continue
+
+            user = None
+            try:
+                user = User.objects.create_user(username=email, email=email, password=password)
+
+                if not rfid:
+                    rfid = f'T{user.id}'
+                if Teacher.objects.filter(rfid=rfid).exists():
+                    rfid = f'{rfid}_{user.id}'
+
+                phone = row.get('phone', '').strip()
+                years_raw = row.get('years', '').strip()
+                programs_raw = row.get('programs', '').strip()
+
+                teacher = Teacher.objects.create(
+                    user=user,
+                    email=email,
+                    teacher_name=name,
+                    rfid=rfid,
+                    phone=phone,
+                    years=years_raw,
+                    programs=programs_raw,
+                    management=management,
+                )
+
+                # Parse courses – semicolons separate entries in the CSV column
+                # because commas are the CSV field delimiter. _parse_and_create_courses
+                # expects comma-separated entries, so normalise the separator here.
+                courses_raw = row.get('courses', '').strip().replace(';', ',')
+                created_courses = []
+                for course_info in UnifiedSignupView._parse_and_create_courses(courses_raw):
+                    course = Course.objects.filter(pk=course_info['course_id']).first()
+                    if not course:
+                        continue
+                    TaughtCourse.objects.get_or_create(
+                        teacher=teacher,
+                        course=course,
+                        defaults={'classes_taken': '0'},
+                    )
+                    created_courses.append(course_info)
+
+                row_result.update(
+                    status='success',
+                    teacher_id=teacher.teacher_id,
+                    courses_added=len(created_courses),
+                )
+            except Exception as exc:
+                if user is not None:
+                    try:
+                        user.delete()
+                    except Exception:
+                        pass
+                row_result.update(status='error', error=str(exc))
+
+            results.append(row_result)
+
+        success_count = sum(1 for r in results if r['status'] == 'success')
+        error_count = len(results) - success_count
+        return Response({
+            'total': len(results),
+            'success': success_count,
+            'errors': error_count,
+            'results': results,
+        }, status=status.HTTP_200_OK)
 
 
 # ============ CRUD ViewSets for all models ============
