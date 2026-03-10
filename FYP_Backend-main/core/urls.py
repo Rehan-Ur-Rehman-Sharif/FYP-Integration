@@ -37,6 +37,7 @@ from .views import (
     CourseAttendanceSummaryView,
     BulkStudentUploadView,
     BulkTeacherUploadView,
+    BulkCourseUploadView,
 )
 
 # Create a router for CRUD ViewSets
@@ -82,6 +83,7 @@ urlpatterns = [
     # Bulk CSV upload endpoints
     path('bulk-upload/students/', BulkStudentUploadView.as_view(), name='bulk-upload-students'),
     path('bulk-upload/teachers/', BulkTeacherUploadView.as_view(), name='bulk-upload-teachers'),
+    path('bulk-upload/courses/', BulkCourseUploadView.as_view(), name='bulk-upload-courses'),
 
     # API Registration endpoints
     path('auth/register/student/', StudentRegistrationView.as_view(), name='student-register'),

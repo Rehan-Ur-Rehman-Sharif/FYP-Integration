@@ -740,6 +740,92 @@ class BulkTeacherUploadView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+class BulkCourseUploadView(APIView):
+    """
+    Bulk-insert courses from a CSV file.
+
+    POST /api/bulk-upload/courses/
+    Content-Type: multipart/form-data
+    Field: file (CSV)
+
+    Required CSV columns : course_name
+    Optional CSV columns : course_code
+
+    Rows whose ``course_code`` already exists in the database are skipped
+    (reported as ``"skipped"`` rather than an error). Rows without a
+    ``course_code`` are matched by ``course_name`` instead.
+
+    Returns a summary object with per-row success/skipped/error details.
+    """
+    permission_classes = [AllowAny]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        csv_file = request.FILES.get('file')
+        if not csv_file:
+            return Response(
+                {'error': 'No file provided. Send the CSV as form-data field "file".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not csv_file.name.lower().endswith('.csv'):
+            return Response(
+                {'error': 'Uploaded file must have a .csv extension.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            decoded = csv_file.read().decode('utf-8-sig')  # handle optional BOM
+            reader = csv.DictReader(io.StringIO(decoded))
+        except Exception as exc:
+            return Response({'error': f'Could not parse CSV: {exc}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        results = []
+        for row_num, row in enumerate(reader, start=2):
+            course_name = row.get('course_name', '').strip()
+            course_code = row.get('course_code', '').strip()
+
+            row_result = {'row': row_num, 'course_name': course_name, 'course_code': course_code}
+
+            if not course_name:
+                row_result.update(status='error', error='course_name is required')
+                results.append(row_result)
+                continue
+
+            try:
+                if course_code:
+                    # Match by code first; update name if only code matches but name differs
+                    course, created = Course.objects.get_or_create(
+                        course_code=course_code,
+                        defaults={'course_name': course_name},
+                    )
+                else:
+                    course, created = Course.objects.get_or_create(
+                        course_name=course_name,
+                        defaults={'course_code': ''},
+                    )
+
+                if created:
+                    row_result.update(status='success', course_id=course.course_id)
+                else:
+                    row_result.update(status='skipped', course_id=course.course_id,
+                                      reason='Course already exists')
+            except Exception as exc:
+                row_result.update(status='error', error=str(exc))
+
+            results.append(row_result)
+
+        success_count = sum(1 for r in results if r['status'] == 'success')
+        skipped_count = sum(1 for r in results if r['status'] == 'skipped')
+        error_count = sum(1 for r in results if r['status'] == 'error')
+        return Response({
+            'total': len(results),
+            'success': success_count,
+            'skipped': skipped_count,
+            'errors': error_count,
+            'results': results,
+        }, status=status.HTTP_200_OK)
+
+
 # ============ CRUD ViewSets for all models ============
 
 class StudentViewSet(viewsets.ModelViewSet):

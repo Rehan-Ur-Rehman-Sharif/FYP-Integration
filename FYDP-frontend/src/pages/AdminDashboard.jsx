@@ -5,6 +5,7 @@ import AdminHeader from "../components/admin/AdminHeader";
 import AttendanceRequests from "../components/admin/AttendenceRequest";
 import ManageStudents from "../components/admin/ManageStudents";
 import ManageTeachers from "../components/admin/ManageTeacher";
+import ManageCourses from "../components/admin/ManageCourses";
 import ViewAttendance from "../components/admin/ViewAttendence";
 import "../styles/admin.css";
 import { getAttendanceRequests } from "../data/AttendenceRequest";
@@ -121,6 +122,10 @@ const AdminDashboard = () => {
           departments={adminData.departments}
           onRegister={handleRegisterTeacher}
         />
+      )}
+
+      {tab === "courses" && (
+        <ManageCourses />
       )}
 
       {tab === "view" && (
