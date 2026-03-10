@@ -52,6 +52,13 @@ const ManageTeachers = ({ programs = [], years = [] }) => {
   });
 
   /* ======================
+     CSV BULK UPLOAD STATE
+  ====================== */
+  const [csvFile, setCsvFile] = useState(null);
+  const [csvUploading, setCsvUploading] = useState(false);
+  const [csvResult, setCsvResult] = useState(null);
+
+  /* ======================
      HELPERS
   ====================== */
   const parseCommaList = (value) =>
@@ -138,6 +145,39 @@ const ManageTeachers = ({ programs = [], years = [] }) => {
     });
 
     alert(`Teacher Registered\nID: ${newTeacher.id}\nPassword: ${newTeacher.password}`);
+  };
+
+  /* ======================
+     CSV BULK UPLOAD
+  ====================== */
+  const handleCsvUpload = async () => {
+    if (!csvFile) {
+      alert("Please select a CSV file first.");
+      return;
+    }
+    setCsvUploading(true);
+    setCsvResult(null);
+    try {
+      const token = localStorage.getItem("accessToken");
+      const formData = new FormData();
+      formData.append("file", csvFile);
+      const response = await fetch(summaryApi.bulkUploadTeachers.url, {
+        method: summaryApi.bulkUploadTeachers.method.toUpperCase(),
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok) {
+        setCsvResult(data);
+      } else {
+        alert(`Upload failed: ${data.error || response.statusText}`);
+      }
+    } catch (_error) {
+      alert("Could not reach the server. Please try again.");
+    } finally {
+      setCsvUploading(false);
+      setCsvFile(null);
+    }
   };
 
   /* ======================
@@ -267,6 +307,38 @@ const ManageTeachers = ({ programs = [], years = [] }) => {
         <button className="primary" onClick={handleRegister}>
           Register Teacher
         </button>
+      </div>
+
+      {/* BULK CSV UPLOAD */}
+      <div className="card-inner">
+        <h4>Bulk Import Teachers from CSV</h4>
+        <p style={{ fontSize: "0.85rem", color: "#555", marginBottom: "8px" }}>
+          CSV columns: <strong>name, email, id, password</strong> (required) and <em>phone, years, programs, courses</em> (optional).
+          Use semicolons to separate multiple courses in the <em>courses</em> column, e.g. <code>CS301: Database; CS401: Algorithms</code>.
+          Separate multiple values in <em>years</em> and <em>programs</em> with commas, e.g. <code>1,2,3</code> or <code>CS,IT</code>.
+        </p>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+          <input
+            type="file"
+            accept=".csv"
+            onChange={(e) => { setCsvFile(e.target.files[0]); setCsvResult(null); }}
+          />
+          <button className="primary" onClick={handleCsvUpload} disabled={csvUploading}>
+            {csvUploading ? "Uploading…" : "Upload CSV"}
+          </button>
+        </div>
+        {csvResult && (
+          <div style={{ marginTop: "10px", padding: "10px", background: "#f4f4f4", borderRadius: "6px" }}>
+            <strong>Upload complete:</strong> {csvResult.success} succeeded, {csvResult.errors} failed out of {csvResult.total}.
+            {csvResult.errors > 0 && (
+              <ul style={{ marginTop: "6px", fontSize: "0.82rem", color: "#c0392b" }}>
+                {csvResult.results.filter(r => r.status === "error").map(r => (
+                  <li key={r.row}>Row {r.row} ({r.name || r.email}): {r.error}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
 
       {/* SEARCH */}

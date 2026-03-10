@@ -1948,3 +1948,219 @@ class CourseAttendanceSummaryTestCase(APITestCase):
     def test_nonexistent_course_returns_404(self):
         response = self.client.get(f'{self.url}?course_code=XXXX')
         self.assertEqual(response.status_code, 404)
+
+
+# ============ Bulk CSV Upload Tests ============
+
+class BulkStudentUploadTestCase(APITestCase):
+    """Tests for POST /api/bulk-upload/students/"""
+
+    def setUp(self):
+        self.url = reverse('bulk-upload-students')
+
+    def _make_csv(self, rows, header='name,email,id,password,year,program,section,courses'):
+        lines = [header] + [','.join(str(v) for v in row) for row in rows]
+        content = '\n'.join(lines)
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile('students.csv', content.encode('utf-8'), content_type='text/csv')
+
+    def test_successful_bulk_upload(self):
+        """Valid CSV rows are inserted and success count matches"""
+        csv_file = self._make_csv([
+            ['Alice', 'alice@test.com', 'S001', 'pass123', '1', 'CS', 'A', ''],
+            ['Bob',   'bob@test.com',   'S002', 'pass123', '2', 'IT', 'B', ''],
+        ])
+        response = self.client.post(self.url, {'file': csv_file}, format='multipart')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['success'], 2)
+        self.assertEqual(response.data['errors'], 0)
+        self.assertTrue(Student.objects.filter(email='alice@test.com').exists())
+        self.assertTrue(Student.objects.filter(email='bob@test.com').exists())
+
+    def test_duplicate_email_counted_as_error(self):
+        """Row with a pre-existing email is reported as an error, not a crash"""
+        User.objects.create_user(username='dup@test.com', email='dup@test.com', password='x')
+        csv_file = self._make_csv([
+            ['Dup', 'dup@test.com', 'S003', 'pass123', '1', 'CS', 'A', ''],
+        ])
+        response = self.client.post(self.url, {'file': csv_file}, format='multipart')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['errors'], 1)
+        self.assertEqual(response.data['success'], 0)
+
+    def test_missing_required_fields_counted_as_error(self):
+        """Row missing name/email/password is reported as an error"""
+        csv_file = self._make_csv([
+            ['', '', 'S004', '', '1', 'CS', 'A', ''],
+        ])
+        response = self.client.post(self.url, {'file': csv_file}, format='multipart')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['errors'], 1)
+
+    def test_no_file_returns_400(self):
+        """Request without a file returns 400"""
+        response = self.client.post(self.url, {}, format='multipart')
+        self.assertEqual(response.status_code, 400)
+
+    def test_wrong_extension_returns_400(self):
+        """Non-CSV file returns 400"""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        txt_file = SimpleUploadedFile('students.txt', b'name,email\n', content_type='text/plain')
+        response = self.client.post(self.url, {'file': txt_file}, format='multipart')
+        self.assertEqual(response.status_code, 400)
+
+    def test_courses_created_for_students(self):
+        """Courses column creates Course + StudentCourse records"""
+        csv_file = self._make_csv(
+            [['Carol', 'carol@test.com', 'S005', 'pass123', '1', 'CS', 'A', 'CS301: Database; CS401: Algorithms']],
+        )
+        response = self.client.post(self.url, {'file': csv_file}, format='multipart')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['success'], 1)
+        student = Student.objects.get(email='carol@test.com')
+        enrolled_courses = StudentCourse.objects.filter(student=student)
+        self.assertEqual(enrolled_courses.count(), 2)
+
+
+class BulkTeacherUploadTestCase(APITestCase):
+    """Tests for POST /api/bulk-upload/teachers/"""
+
+    def setUp(self):
+        self.url = reverse('bulk-upload-teachers')
+
+    def _make_csv(self, rows, header='name,email,id,password,phone,years,programs,courses'):
+        lines = [header] + [','.join(str(v) for v in row) for row in rows]
+        content = '\n'.join(lines)
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile('teachers.csv', content.encode('utf-8'), content_type='text/csv')
+
+    def test_successful_bulk_upload(self):
+        """Valid CSV rows create Teacher records"""
+        csv_file = self._make_csv([
+            ['Prof A', 'proa@test.com', 'T001', 'pass123', '0300-0000001', '1,2', 'CS,IT', ''],
+            ['Prof B', 'prob@test.com', 'T002', 'pass123', '0300-0000002', '3',   'AI',    ''],
+        ])
+        response = self.client.post(self.url, {'file': csv_file}, format='multipart')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['success'], 2)
+        self.assertEqual(response.data['errors'], 0)
+        self.assertTrue(Teacher.objects.filter(email='proa@test.com').exists())
+        self.assertTrue(Teacher.objects.filter(email='prob@test.com').exists())
+
+    def test_duplicate_email_counted_as_error(self):
+        """Duplicate email is reported as an error"""
+        User.objects.create_user(username='tdup@test.com', email='tdup@test.com', password='x')
+        csv_file = self._make_csv([
+            ['Dup T', 'tdup@test.com', 'T003', 'pass123', '', '', '', ''],
+        ])
+        response = self.client.post(self.url, {'file': csv_file}, format='multipart')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['errors'], 1)
+
+    def test_missing_required_fields_counted_as_error(self):
+        """Missing name/email/password is an error"""
+        csv_file = self._make_csv([
+            ['', '', 'T004', '', '', '', '', ''],
+        ])
+        response = self.client.post(self.url, {'file': csv_file}, format='multipart')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['errors'], 1)
+
+    def test_no_file_returns_400(self):
+        response = self.client.post(self.url, {}, format='multipart')
+        self.assertEqual(response.status_code, 400)
+
+    def test_courses_created_for_teachers(self):
+        """Courses column creates Course + TaughtCourse records"""
+        csv_file = self._make_csv(
+            [['Prof C', 'proc@test.com', 'T005', 'pass123', '', '1', 'CS', 'CS301: Database; CS401: Algorithms']],
+        )
+        response = self.client.post(self.url, {'file': csv_file}, format='multipart')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['success'], 1)
+        teacher = Teacher.objects.get(email='proc@test.com')
+        taught = TaughtCourse.objects.filter(teacher=teacher)
+        self.assertEqual(taught.count(), 2)
+
+
+class BulkCourseUploadTestCase(APITestCase):
+    """Tests for POST /api/bulk-upload/courses/"""
+
+    def setUp(self):
+        self.url = reverse('bulk-upload-courses')
+
+    def _make_csv(self, rows, header='course_code,course_name'):
+        lines = [header] + [','.join(str(v) for v in row) for row in rows]
+        content = '\n'.join(lines)
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile('courses.csv', content.encode('utf-8'), content_type='text/csv')
+
+    def test_successful_bulk_upload(self):
+        """Valid CSV rows create Course records"""
+        csv_file = self._make_csv([
+            ['CS301', 'Database Systems'],
+            ['CS401', 'Algorithms'],
+        ])
+        response = self.client.post(self.url, {'file': csv_file}, format='multipart')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['success'], 2)
+        self.assertEqual(response.data['skipped'], 0)
+        self.assertEqual(response.data['errors'], 0)
+        self.assertTrue(Course.objects.filter(course_code='CS301').exists())
+        self.assertTrue(Course.objects.filter(course_code='CS401').exists())
+
+    def test_duplicate_course_code_reported_as_skipped(self):
+        """Row whose course_code already exists is skipped, not an error"""
+        Course.objects.create(course_code='CS301', course_name='Database Systems')
+        csv_file = self._make_csv([
+            ['CS301', 'Database Systems'],
+        ])
+        response = self.client.post(self.url, {'file': csv_file}, format='multipart')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['skipped'], 1)
+        self.assertEqual(response.data['success'], 0)
+        self.assertEqual(response.data['errors'], 0)
+
+    def test_duplicate_course_name_without_code_reported_as_skipped(self):
+        """Row matching by course_name (no code) is skipped when already exists"""
+        Course.objects.create(course_code='', course_name='Networks')
+        csv_file = self._make_csv([['', 'Networks']])
+        response = self.client.post(self.url, {'file': csv_file}, format='multipart')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['skipped'], 1)
+        self.assertEqual(response.data['errors'], 0)
+
+    def test_missing_course_name_counted_as_error(self):
+        """Row with empty course_name is reported as an error"""
+        csv_file = self._make_csv([['CS500', '']])
+        response = self.client.post(self.url, {'file': csv_file}, format='multipart')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['errors'], 1)
+        self.assertEqual(response.data['success'], 0)
+
+    def test_no_file_returns_400(self):
+        """Request without a file returns 400"""
+        response = self.client.post(self.url, {}, format='multipart')
+        self.assertEqual(response.status_code, 400)
+
+    def test_wrong_extension_returns_400(self):
+        """Non-CSV file returns 400"""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        txt_file = SimpleUploadedFile('courses.txt', b'course_code,course_name\n', content_type='text/plain')
+        response = self.client.post(self.url, {'file': txt_file}, format='multipart')
+        self.assertEqual(response.status_code, 400)
+
+    def test_mixed_new_and_existing_rows(self):
+        """A CSV with both new and pre-existing courses reports counts correctly"""
+        Course.objects.create(course_code='CS301', course_name='Database Systems')
+        csv_file = self._make_csv([
+            ['CS301', 'Database Systems'],  # existing → skipped
+            ['CS501', 'Operating Systems'],  # new → success
+            ['CS601', ''],                   # missing name → error
+        ])
+        response = self.client.post(self.url, {'file': csv_file}, format='multipart')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['success'], 1)
+        self.assertEqual(response.data['skipped'], 1)
+        self.assertEqual(response.data['errors'], 1)
+        self.assertEqual(response.data['total'], 3)

@@ -17,6 +17,7 @@ const AdminHeader = ({ tab, setTab }) => {
         <button className={tab==="requests" ? "tab active" : "tab"} onClick={() => setTab("requests")}>Attendance Requests</button>
         <button className={tab==="students" ? "tab active" : "tab"} onClick={() => setTab("students")}>Manage Students</button>
         <button className={tab==="teachers" ? "tab active" : "tab"} onClick={() => setTab("teachers")}>Manage Teachers</button>
+        <button className={tab==="courses" ? "tab active" : "tab"} onClick={() => setTab("courses")}>Manage Courses</button>
         <button className={tab==="view" ? "tab active" : "tab"} onClick={() => setTab("view")}>View Attendance</button>
       </div>
 
