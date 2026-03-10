@@ -32,12 +32,23 @@ class StudentSerializer(serializers.ModelSerializer):
         read_only_fields = ['student_id', 'program', 'courses']
 
 
+class TaughtCourseInlineSerializer(serializers.ModelSerializer):
+    course_name = serializers.CharField(source='course.course_name', read_only=True)
+    course_code = serializers.CharField(source='course.course_code', read_only=True)
+
+    class Meta:
+        model = TaughtCourse
+        fields = ['id', 'course', 'course_code', 'course_name', 'section', 'year']
+
+
 class TeacherSerializer(serializers.ModelSerializer):
     """Serializer for Teacher model CRUD operations"""
+    courses = TaughtCourseInlineSerializer(source='taught_courses', many=True, read_only=True)
+
     class Meta:
         model = Teacher
-        fields = ['teacher_id', 'teacher_name', 'email', 'rfid', 'phone', 'years', 'programs', 'management']
-        read_only_fields = ['teacher_id']
+        fields = ['teacher_id', 'teacher_name', 'email', 'rfid', 'phone', 'years', 'programs', 'management', 'courses']
+        read_only_fields = ['teacher_id', 'courses']
 
 
 class ManagementSerializer(serializers.ModelSerializer):
@@ -93,15 +104,16 @@ class UpdateAttendanceRequestSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source='student.student_name', read_only=True)
     course_name = serializers.CharField(source='course.course_name', read_only=True)
     processed_by_name = serializers.CharField(source='processed_by.Management_name', read_only=True)
+    management_name = serializers.CharField(source='management.Management_name', read_only=True)
 
     class Meta:
         model = UpdateAttendanceRequest
         fields = [
-            'id', 'teacher', 'student', 'course', 'classes_to_add', 'reason',
+            'id', 'teacher', 'student', 'course', 'management', 'classes_to_add', 'reason',
             'status', 'requested_at', 'processed_at', 'processed_by',
-            'teacher_name', 'student_name', 'course_name', 'processed_by_name'
+            'teacher_name', 'student_name', 'course_name', 'processed_by_name', 'management_name'
         ]
-        read_only_fields = ['id', 'status', 'requested_at', 'processed_at', 'processed_by']
+        read_only_fields = ['id', 'status', 'requested_at', 'processed_at', 'processed_by', 'management']
 
 
 # ============ Registration Serializers ============

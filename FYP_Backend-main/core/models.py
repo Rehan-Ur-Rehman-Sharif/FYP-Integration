@@ -95,6 +95,7 @@ class UpdateAttendanceRequest(models.Model):
     teacher = models.ForeignKey('Teacher', on_delete=models.CASCADE, related_name='attendance_update_requests')
     student = models.ForeignKey('Student', on_delete=models.CASCADE, related_name='attendance_update_requests')
     course = models.ForeignKey('Course', on_delete=models.CASCADE, related_name='attendance_update_requests')
+    management = models.ForeignKey('Management', on_delete=models.SET_NULL, null=True, blank=True, related_name='attendance_requests')
     classes_to_add = models.CharField(max_length=255)  # e.g., "Class A, Class B" - classes to add to attendance
     reason = models.TextField(blank=True)  # Optional reason for the request
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')

@@ -6,6 +6,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.utils import timezone
+from django.db.models import Q
 from django.http import HttpResponse
 from rest_framework import status, generics, viewsets
 from rest_framework.response import Response
@@ -465,6 +466,7 @@ class StudentViewSet(viewsets.ModelViewSet):
     - PUT /students/{id}/ - Update a student
     - PATCH /students/{id}/ - Partial update a student
     - DELETE /students/{id}/ - Delete a student
+    - PATCH /students/{id}/update-courses/ - Replace all courses for a student
     """
     queryset = Student.objects.prefetch_related('student_courses__course', 'student_courses__teacher').all()
     serializer_class = StudentSerializer
@@ -487,6 +489,79 @@ class StudentViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(section=section)
         return queryset
 
+    @action(detail=True, methods=['patch'], url_path='update-courses')
+    def update_courses(self, request, pk=None):
+        """
+        Replace all courses for a student.
+        Accepts the same comma-separated format as signup:
+          { "courses": "CS301: Database Systems, CS401: Algorithms" }
+        All existing StudentCourse records for this student are removed and
+        new ones are created from the provided list.
+        """
+        student = self.get_object()
+        courses_raw = request.data.get('courses', '').strip()
+
+        if not courses_raw:
+            return Response({'error': 'courses field is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Delete all existing StudentCourse records for this student
+        student.student_courses.all().delete()
+
+        management = student.management
+        created_courses = []
+
+        for course_info in UnifiedSignupView._parse_and_create_courses(courses_raw):
+            course = Course.objects.filter(pk=course_info['course_id']).first()
+            if not course:
+                continue
+
+            # Teacher matching (same priority chain as registration)
+            taught = TaughtCourse.objects.filter(
+                course=course,
+                section=student.section,
+                year=student.year,
+                teacher__programs__icontains=student.dept,
+                teacher__years__icontains=str(student.year),
+                **({'teacher__management': management} if management else {}),
+            ).first()
+            if not taught and management:
+                taught = TaughtCourse.objects.filter(
+                    course=course, section=student.section, year=student.year,
+                    teacher__management=management,
+                ).first()
+            if not taught and management:
+                taught = TaughtCourse.objects.filter(
+                    course=course,
+                    teacher__programs__icontains=student.dept,
+                    teacher__years__icontains=str(student.year),
+                    teacher__management=management,
+                ).first()
+            if not taught:
+                taught = TaughtCourse.objects.filter(
+                    course=course, section=student.section, year=student.year,
+                    teacher__programs__icontains=student.dept,
+                    teacher__years__icontains=str(student.year),
+                ).first()
+            if not taught:
+                taught = TaughtCourse.objects.filter(
+                    course=course, section=student.section, year=student.year,
+                ).first()
+
+            teacher = taught.teacher if taught else None
+            StudentCourse.objects.create(
+                student=student,
+                course=course,
+                teacher=teacher,
+                classes_attended=''
+            )
+            created_courses.append(course_info)
+
+        return Response({
+            'message': 'Courses updated successfully',
+            'student_id': student.student_id,
+            'courses': created_courses,
+        }, status=status.HTTP_200_OK)
+
 
 class TeacherViewSet(viewsets.ModelViewSet):
     """
@@ -500,19 +575,38 @@ class TeacherViewSet(viewsets.ModelViewSet):
 
     Optional filter query params: ?year=X&program=Y
     """
-    queryset = Teacher.objects.all()
+    queryset = Teacher.objects.prefetch_related('taught_courses__course').all()
     serializer_class = TeacherSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         queryset = self.queryset.all()
-        # Filter by year or program – stored as comma-separated strings, use icontains
-        year = self.request.query_params.get('year', '').strip()
-        program = self.request.query_params.get('program', '').strip()
+
+        # Scope to the logged-in management's teachers
+        try:
+            management = Management.objects.get(user=self.request.user)
+            queryset = queryset.filter(management=management)
+        except Management.DoesNotExist:
+            pass
+
+        # Filter by year or program – stored as comma-separated strings, match whole values only
+        # Accept both singular (?year=) and plural (?years=) param names
+        year = (self.request.query_params.get('year') or self.request.query_params.get('years') or '').strip()
+        program = (self.request.query_params.get('program') or self.request.query_params.get('programs') or '').strip()
         if year:
-            queryset = queryset.filter(years__icontains=year)
+            queryset = queryset.filter(
+                Q(years=year) |
+                Q(years__startswith=f'{year},') |
+                Q(years__endswith=f',{year}') |
+                Q(years__icontains=f',{year},')
+            )
         if program:
-            queryset = queryset.filter(programs__icontains=program)
+            queryset = queryset.filter(
+                Q(programs=program) |
+                Q(programs__startswith=f'{program},') |
+                Q(programs__endswith=f',{program}') |
+                Q(programs__icontains=f',{program},')
+            )
         return queryset
 
 
@@ -634,6 +728,15 @@ class UpdateAttendanceRequestViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset
+        user = self.request.user
+
+        # If the authenticated user is management, restrict to their own requests
+        try:
+            management = Management.objects.get(user=user)
+            queryset = queryset.filter(management=management)
+        except Management.DoesNotExist:
+            pass
+
         # Optional filters
         teacher_id = self.request.query_params.get('teacher')
         student_id = self.request.query_params.get('student')
@@ -648,6 +751,12 @@ class UpdateAttendanceRequestViewSet(viewsets.ModelViewSet):
         if request_status:
             queryset = queryset.filter(status=request_status)
         return queryset
+
+    def perform_create(self, serializer):
+        """Auto-set management from the teacher's management on create"""
+        teacher = serializer.validated_data.get('teacher')
+        management = teacher.management if teacher else None
+        serializer.save(management=management)
 
     def _process_request(self, request, pk, approve):
         """Helper method to approve or reject a request"""
