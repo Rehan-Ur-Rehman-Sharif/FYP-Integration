@@ -26,6 +26,10 @@ const summaryApi={
         url: `${backendDomain}/api/teachers/`,
         method: "get"
     },
+    courses:{
+        url: `${backendDomain}/api/courses/`,
+        method: "get"
+    },
     // Attendance summary endpoints for admin View Attendance tab
     studentAttendance:{
         url: `${backendDomain}/api/attendance/student/`,
@@ -34,6 +38,19 @@ const summaryApi={
     courseAttendance:{
         url: `${backendDomain}/api/attendance/course/`,
         method: "get"
+    },
+    // Bulk CSV upload endpoints
+    bulkUploadStudents:{
+        url: `${backendDomain}/api/bulk-upload/students/`,
+        method: "post"
+    },
+    bulkUploadTeachers:{
+        url: `${backendDomain}/api/bulk-upload/teachers/`,
+        method: "post"
+    },
+    bulkUploadCourses:{
+        url: `${backendDomain}/api/bulk-upload/courses/`,
+        method: "post"
     }
 }
 
