@@ -28,7 +28,7 @@ class StudentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Student
-        fields = ['student_id', 'student_name', 'email', 'rfid', 'overall_attendance', 'year', 'dept', 'program', 'section', 'management', 'courses']
+        fields = ['student_id', 'student_name', 'email', 'student_rollNo', 'overall_attendance', 'year', 'dept', 'program', 'section', 'management', 'courses']
         read_only_fields = ['student_id', 'program', 'courses']
 
 
@@ -47,7 +47,7 @@ class TeacherSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Teacher
-        fields = ['teacher_id', 'teacher_name', 'email', 'rfid', 'phone', 'years', 'programs', 'management', 'courses']
+        fields = ['teacher_id', 'teacher_name', 'email', 'teacher_rollNo', 'phone', 'years', 'programs', 'management', 'courses']
         read_only_fields = ['teacher_id', 'courses']
 
 
@@ -100,8 +100,22 @@ class StudentCourseSerializer(serializers.ModelSerializer):
 
 class UpdateAttendanceRequestSerializer(serializers.ModelSerializer):
     """Serializer for UpdateAttendanceRequest model CRUD operations"""
+    teacher = serializers.PrimaryKeyRelatedField(read_only=True)
+    student = serializers.PrimaryKeyRelatedField(read_only=True)
+    teacher_rollNo = serializers.SlugRelatedField(
+        source='teacher',
+        slug_field='teacher_rollNo',
+        queryset=Teacher.objects.all(),
+    )
+    student_rollNo = serializers.SlugRelatedField(
+        source='student',
+        slug_field='student_rollNo',
+        queryset=Student.objects.all(),
+    )
     teacher_name = serializers.CharField(source='teacher.teacher_name', read_only=True)
     student_name = serializers.CharField(source='student.student_name', read_only=True)
+    student_dept = serializers.CharField(source='student.dept', read_only=True)
+    student_section = serializers.CharField(source='student.section', read_only=True)
     course_name = serializers.CharField(source='course.course_name', read_only=True)
     processed_by_name = serializers.CharField(source='processed_by.Management_name', read_only=True)
     management_name = serializers.CharField(source='management.Management_name', read_only=True)
@@ -109,11 +123,14 @@ class UpdateAttendanceRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = UpdateAttendanceRequest
         fields = [
-            'id', 'teacher', 'student', 'course', 'management', 'classes_to_add', 'reason',
+            'id', 'teacher', 'student', 'teacher_rollNo', 'student_rollNo',
+            'course', 'management', 'classes_to_add', 'reason', 'attendanceType',
             'status', 'requested_at', 'processed_at', 'processed_by',
-            'teacher_name', 'student_name', 'course_name', 'processed_by_name', 'management_name'
+            'teacher_name', 'student_name', 'student_dept', 'student_section', 'course_name', 'processed_by_name', 'management_name'
         ]
-        read_only_fields = ['id', 'status', 'requested_at', 'processed_at', 'processed_by', 'management']
+        read_only_fields = [
+            'id', 'teacher', 'student', 'status', 'requested_at', 'processed_at', 'processed_by', 'management'
+        ]
 
 
 # ============ Registration Serializers ============
@@ -125,7 +142,7 @@ class StudentRegistrationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Student
-        fields = ('email', 'password', 'password2', 'student_name', 'rfid', 'year', 'dept', 'section')
+        fields = ('email', 'password', 'password2', 'student_name', 'student_rollNo', 'year', 'dept', 'section')
 
     def validate(self, attrs):
         if attrs['password'] != attrs['password2']:
@@ -152,7 +169,7 @@ class StudentRegistrationSerializer(serializers.ModelSerializer):
             user=user,
             email=validated_data['email'],
             student_name=validated_data['student_name'],
-            rfid=validated_data['rfid'],
+            student_rollNo=validated_data['student_rollNo'],
             year=validated_data['year'],
             dept=validated_data['dept'],
             section=validated_data['section']
@@ -168,7 +185,7 @@ class TeacherRegistrationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Teacher
-        fields = ('email', 'password', 'password2', 'teacher_name', 'rfid')
+        fields = ('email', 'password', 'password2', 'teacher_name', 'teacher_rollNo')
 
     def validate(self, attrs):
         if attrs['password'] != attrs['password2']:
@@ -195,7 +212,7 @@ class TeacherRegistrationSerializer(serializers.ModelSerializer):
             user=user,
             email=validated_data['email'],
             teacher_name=validated_data['teacher_name'],
-            rfid=validated_data['rfid']
+            teacher_rollNo=validated_data['teacher_rollNo']
         )
         
         return teacher
@@ -316,7 +333,7 @@ class StudentAttendanceSummarySerializer(serializers.Serializer):
     """Full attendance summary for a single student across all enrolled courses."""
     student_id = serializers.IntegerField()
     name = serializers.CharField()
-    rfid = serializers.CharField()
+    student_rollNo = serializers.CharField()
     year = serializers.IntegerField()
     program = serializers.CharField()
     section = serializers.CharField()
@@ -328,7 +345,7 @@ class StudentAttendanceSummarySerializer(serializers.Serializer):
 class CourseStudentAttendanceSerializer(serializers.Serializer):
     """Per-student attendance entry for a course (used in course-wise view)."""
     student_id = serializers.IntegerField()
-    roll = serializers.CharField()       # rfid used as roll number
+    roll = serializers.CharField()
     name = serializers.CharField()
     year = serializers.IntegerField()
     program = serializers.CharField()    # dept

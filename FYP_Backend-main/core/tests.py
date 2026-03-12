@@ -17,7 +17,7 @@ class StudentRegistrationTestCase(APITestCase):
             'password': 'TestPass123!',
             'password2': 'TestPass123!',
             'student_name': 'Test Student',
-            'rfid': 'RFID001',
+            'student_rollNo': 'RFID001',
             'year': 1,
             'dept': 'CS',
             'section': 'A'
@@ -57,7 +57,7 @@ class StudentLoginTestCase(APITestCase):
             'password': 'TestPass123!',
             'password2': 'TestPass123!',
             'student_name': 'Test Student',
-            'rfid': 'RFID001',
+            'student_rollNo': 'RFID001',
             'year': 1,
             'dept': 'CS',
             'section': 'A'
@@ -101,7 +101,7 @@ class TeacherRegistrationTestCase(APITestCase):
             'password': 'TestPass123!',
             'password2': 'TestPass123!',
             'teacher_name': 'Test Teacher',
-            'rfid': 'RFID002'
+            'teacher_rollNo': 'RFID002'
         }
 
     def test_teacher_registration_success(self):
@@ -125,7 +125,7 @@ class TeacherLoginTestCase(APITestCase):
             'password': 'TestPass123!',
             'password2': 'TestPass123!',
             'teacher_name': 'Test Teacher',
-            'rfid': 'RFID002'
+            'teacher_rollNo': 'RFID002'
         }
         # Register a teacher
         self.client.post(self.register_url, self.credentials, format='json')
@@ -201,7 +201,7 @@ class UserTypeSeparationTestCase(APITestCase):
             'password': 'TestPass123!',
             'password2': 'TestPass123!',
             'student_name': 'Test Student',
-            'rfid': 'RFID001',
+            'student_rollNo': 'RFID001',
             'year': 1,
             'dept': 'CS',
             'section': 'A'
@@ -241,7 +241,7 @@ class StudentCRUDTestCase(AuthenticatedAPITestCase):
         self.student = Student.objects.create(
             student_name='Test Student',
             email='student@test.com',
-            rfid='RFID001',
+            student_rollNo='RFID001',
             year=1,
             dept='CS',
             section='A'
@@ -263,7 +263,7 @@ class StudentCRUDTestCase(AuthenticatedAPITestCase):
     
     def test_update_student(self):
         """Test updating a student"""
-        data = {'student_name': 'Updated Student', 'email': 'updated@test.com', 'rfid': 'RFID001', 'year': 2, 'dept': 'IT', 'section': 'B'}
+        data = {'student_name': 'Updated Student', 'email': 'updated@test.com', 'student_rollNo': 'RFID001', 'year': 2, 'dept': 'IT', 'section': 'B'}
         response = self.client.put(self.detail_url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['student_name'], 'Updated Student')
@@ -283,7 +283,7 @@ class StudentCRUDTestCase(AuthenticatedAPITestCase):
     
     def test_filter_students_by_year(self):
         """Test filtering students by year"""
-        Student.objects.create(student_name='Year 2 Student', email='year2@test.com', rfid='RFID002', year=2, dept='CS', section='A')
+        Student.objects.create(student_name='Year 2 Student', email='year2@test.com', student_rollNo='RFID002', year=2, dept='CS', section='A')
         response = self.client.get(self.list_url, {'year': 1})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
@@ -296,9 +296,10 @@ class TeacherCRUDTestCase(AuthenticatedAPITestCase):
     def setUp(self):
         super().setUp()
         self.teacher = Teacher.objects.create(
+            user=self.user,
             teacher_name='Test Teacher',
             email='teacher@test.com',
-            rfid='RFID001'
+            teacher_rollNo='RFID001'
         )
         self.list_url = reverse('teacher-list')
         self.detail_url = reverse('teacher-detail', args=[self.teacher.teacher_id])
@@ -317,7 +318,7 @@ class TeacherCRUDTestCase(AuthenticatedAPITestCase):
     
     def test_update_teacher(self):
         """Test updating a teacher"""
-        data = {'teacher_name': 'Updated Teacher', 'email': 'updated@test.com', 'rfid': 'RFID001'}
+        data = {'teacher_name': 'Updated Teacher', 'email': 'updated@test.com', 'teacher_rollNo': 'RFID001'}
         response = self.client.put(self.detail_url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['teacher_name'], 'Updated Teacher')
@@ -453,7 +454,7 @@ class TaughtCourseCRUDTestCase(AuthenticatedAPITestCase):
     def setUp(self):
         super().setUp()
         self.course = Course.objects.create(course_name='Test Course')
-        self.teacher = Teacher.objects.create(teacher_name='Test Teacher', email='teacher@test.com', rfid='RFID001')
+        self.teacher = Teacher.objects.create(teacher_name='Test Teacher', email='teacher@test.com', teacher_rollNo='RFID001')
         self.taught_course = TaughtCourse.objects.create(
             course=self.course,
             teacher=self.teacher,
@@ -470,7 +471,7 @@ class TaughtCourseCRUDTestCase(AuthenticatedAPITestCase):
     
     def test_create_taught_course(self):
         """Test creating a taught course"""
-        new_teacher = Teacher.objects.create(teacher_name='New Teacher', email='new@test.com', rfid='RFID002')
+        new_teacher = Teacher.objects.create(teacher_name='New Teacher', email='new@test.com', teacher_rollNo='RFID002')
         data = {'course': self.course.course_id, 'teacher': new_teacher.teacher_id, 'classes_taken': 'Class C'}
         response = self.client.post(self.list_url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -506,9 +507,9 @@ class StudentCourseCRUDTestCase(AuthenticatedAPITestCase):
     
     def setUp(self):
         super().setUp()
-        self.student = Student.objects.create(student_name='Test Student', email='student@test.com', rfid='RFID001', year=1, dept='CS', section='A')
+        self.student = Student.objects.create(student_name='Test Student', email='student@test.com', student_rollNo='RFID001', year=1, dept='CS', section='A')
         self.course = Course.objects.create(course_name='Test Course')
-        self.teacher = Teacher.objects.create(teacher_name='Test Teacher', email='teacher@test.com', rfid='RFID002')
+        self.teacher = Teacher.objects.create(teacher_name='Test Teacher', email='teacher@test.com', teacher_rollNo='RFID002')
         self.student_course = StudentCourse.objects.create(
             student=self.student,
             course=self.course,
@@ -526,7 +527,7 @@ class StudentCourseCRUDTestCase(AuthenticatedAPITestCase):
     
     def test_create_student_course(self):
         """Test creating a student course"""
-        new_student = Student.objects.create(student_name='New Student', email='new@test.com', rfid='RFID003', year=2, dept='IT', section='B')
+        new_student = Student.objects.create(student_name='New Student', email='new@test.com', student_rollNo='RFID003', year=2, dept='IT', section='B')
         data = {'student': new_student.student_id, 'course': self.course.course_id, 'teacher': self.teacher.teacher_id, 'classes_attended': 'Class B'}
         response = self.client.post(self.list_url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -583,19 +584,26 @@ class UpdateAttendanceRequestCRUDTestCase(AuthenticatedAPITestCase):
     
     def setUp(self):
         super().setUp()
+        self.management = Management.objects.create(
+            user=self.user,
+            email='mgmt@test.com',
+            Management_name='Test Management'
+        )
         # Create required related objects
         self.teacher = Teacher.objects.create(
             teacher_name='Test Teacher',
             email='teacher@test.com',
-            rfid='RFID001'
+            teacher_rollNo='RFID001',
+            management=self.management
         )
         self.student = Student.objects.create(
             student_name='Test Student',
             email='student@test.com',
-            rfid='RFID002',
+            student_rollNo='RFID002',
             year=1,
             dept='CS',
-            section='A'
+            section='A',
+            management=self.management
         )
         self.course = Course.objects.create(course_name='Test Course')
         
@@ -622,14 +630,14 @@ class UpdateAttendanceRequestCRUDTestCase(AuthenticatedAPITestCase):
         new_student = Student.objects.create(
             student_name='New Student',
             email='new@test.com',
-            rfid='RFID003',
+            student_rollNo='RFID003',
             year=2,
             dept='IT',
             section='B'
         )
         data = {
-            'teacher': self.teacher.teacher_id,
-            'student': new_student.student_id,
+            'teacher_rollNo': self.teacher.teacher_rollNo,
+            'student_rollNo': new_student.student_rollNo,
             'course': self.course.course_id,
             'classes_to_add': 'Class C',
             'reason': 'Late arrival registered'
@@ -638,6 +646,8 @@ class UpdateAttendanceRequestCRUDTestCase(AuthenticatedAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['classes_to_add'], 'Class C')
         self.assertEqual(response.data['status'], 'pending')
+        self.assertEqual(response.data['teacher_rollNo'], self.teacher.teacher_rollNo)
+        self.assertEqual(response.data['student_rollNo'], new_student.student_rollNo)
     
     def test_retrieve_update_attendance_request(self):
         """Test retrieving a single update attendance request"""
@@ -651,8 +661,8 @@ class UpdateAttendanceRequestCRUDTestCase(AuthenticatedAPITestCase):
     def test_update_attendance_request(self):
         """Test updating an update attendance request"""
         data = {
-            'teacher': self.teacher.teacher_id,
-            'student': self.student.student_id,
+            'teacher_rollNo': self.teacher.teacher_rollNo,
+            'student_rollNo': self.student.student_rollNo,
             'course': self.course.course_id,
             'classes_to_add': 'Class D, Class E',
             'reason': 'Updated reason'
@@ -680,9 +690,32 @@ class UpdateAttendanceRequestCRUDTestCase(AuthenticatedAPITestCase):
     
     def test_filter_by_teacher(self):
         """Test filtering update attendance requests by teacher"""
-        response = self.client.get(self.list_url, {'teacher': self.teacher.teacher_id})
+        response = self.client.get(
+            self.list_url,
+            {'teacher_rollNo': self.teacher.teacher_rollNo, 'management_id': self.management.Management_id}
+        )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
+
+    def test_filter_by_management_id_mismatch_returns_empty(self):
+        """Management user cannot query another management's requests"""
+        response = self.client.get(self.list_url, {'management_id': self.management.Management_id + 999})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 0)
+
+    def test_create_update_attendance_request_rejects_numeric_ids(self):
+        """Test that roll number fields are required instead of numeric teacher/student ids"""
+        data = {
+            'teacher': self.teacher.teacher_id,
+            'student': self.student.student_id,
+            'course': self.course.course_id,
+            'classes_to_add': 'Class Z',
+            'reason': 'Should fail without roll number fields'
+        }
+        response = self.client.post(self.list_url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('teacher_rollNo', response.data)
+        self.assertIn('student_rollNo', response.data)
 
 
 class UpdateAttendanceRequestApproveRejectTestCase(APITestCase):
@@ -712,12 +745,12 @@ class UpdateAttendanceRequestApproveRejectTestCase(APITestCase):
         self.teacher = Teacher.objects.create(
             teacher_name='Test Teacher',
             email='teacher@test.com',
-            rfid='RFID001'
+            teacher_rollNo='RFID001'
         )
         self.student = Student.objects.create(
             student_name='Test Student',
             email='student@test.com',
-            rfid='RFID002',
+            student_rollNo='RFID002',
             year=1,
             dept='CS',
             section='A'
@@ -869,7 +902,7 @@ class AttendanceSessionTestCase(APITestCase):
             user=self.user,
             teacher_name='Test Teacher',
             email='teacher@test.com',
-            rfid='RFID001'
+            teacher_rollNo='RFID001'
         )
         self.course = Course.objects.create(course_name='Test Course')
         
@@ -980,7 +1013,7 @@ class AttendanceSessionTestCase(APITestCase):
         other_teacher = Teacher.objects.create(
             teacher_name='Other Teacher',
             email='other@test.com',
-            rfid='RFID002'
+            teacher_rollNo='RFID002'
         )
         
         AttendanceSession.objects.create(
@@ -1012,13 +1045,13 @@ class RFIDScanTestCase(APITestCase):
         self.teacher = Teacher.objects.create(
             teacher_name='Test Teacher',
             email='teacher@test.com',
-            rfid='RFID001'
+            teacher_rollNo='RFID001'
         )
         self.course = Course.objects.create(course_name='Test Course')
         self.student = Student.objects.create(
             student_name='Test Student',
             email='student@test.com',
-            rfid='RFID_STUDENT_1',
+            student_rollNo='RFID_STUDENT_1',
             year=1,
             dept='CS',
             section='A'
@@ -1103,14 +1136,14 @@ class QRScanTestCase(APITestCase):
         self.teacher = Teacher.objects.create(
             teacher_name='Test Teacher',
             email='teacher@test.com',
-            rfid='RFID001'
+            teacher_rollNo='RFID001'
         )
         self.course = Course.objects.create(course_name='Test Course')
         self.student = Student.objects.create(
             user=self.user,
             student_name='Test Student',
             email='student@test.com',
-            rfid='RFID_STUDENT_1',
+            student_rollNo='RFID_STUDENT_1',
             year=1,
             dept='CS',
             section='A'
@@ -1183,14 +1216,14 @@ class TwoFactorAttendanceTestCase(APITestCase):
         self.teacher = Teacher.objects.create(
             teacher_name='Test Teacher',
             email='teacher@test.com',
-            rfid='RFID001'
+            teacher_rollNo='RFID001'
         )
         self.course = Course.objects.create(course_name='Test Course')
         self.student = Student.objects.create(
             user=self.user,
             student_name='Test Student',
             email='student@test.com',
-            rfid='RFID_STUDENT_1',
+            student_rollNo='RFID_STUDENT_1',
             year=1,
             dept='CS',
             section='A'
@@ -1326,7 +1359,7 @@ class AttendanceSessionStatisticsTestCase(APITestCase):
             user=self.user,
             teacher_name='Test Teacher',
             email='teacher@test.com',
-            rfid='RFID001'
+            teacher_rollNo='RFID001'
         )
         self.course = Course.objects.create(course_name='Test Course')
         self.session = AttendanceSession.objects.create(
@@ -1342,19 +1375,19 @@ class AttendanceSessionStatisticsTestCase(APITestCase):
         self.student1 = Student.objects.create(
             student_name='Student 1',
             email='student1@test.com',
-            rfid='RFID_1',
+            student_rollNo='RFID_1',
             year=1, dept='CS', section='A'
         )
         self.student2 = Student.objects.create(
             student_name='Student 2',
             email='student2@test.com',
-            rfid='RFID_2',
+            student_rollNo='RFID_2',
             year=1, dept='CS', section='A'
         )
         self.student3 = Student.objects.create(
             student_name='Student 3',
             email='student3@test.com',
-            rfid='RFID_3',
+            student_rollNo='RFID_3',
             year=1, dept='CS', section='A'
         )
         
@@ -1417,7 +1450,7 @@ class UnifiedLoginTestCase(APITestCase):
         )
         self.student = Student.objects.create(
             user=self.student_user, email='stu@test.com',
-            student_name='Test Student', rfid='RFID_STU',
+            student_name='Test Student', student_rollNo='RFID_STU',
             year=1, dept='CS', section='A'
         )
 
@@ -1427,7 +1460,7 @@ class UnifiedLoginTestCase(APITestCase):
         )
         self.teacher = Teacher.objects.create(
             user=self.teacher_user, email='tch@test.com',
-            teacher_name='Test Teacher', rfid='RFID_TCH'
+            teacher_name='Test Teacher', teacher_rollNo='RFID_TCH'
         )
 
         # Create a management (admin) user
@@ -1527,7 +1560,7 @@ class UnifiedSignupTestCase(APITestCase):
         self.assertTrue(Student.objects.filter(email='newstudent@test.com').exists())
         student = Student.objects.get(email='newstudent@test.com')
         self.assertEqual(student.student_name, 'New Student')
-        self.assertEqual(student.rfid, 'ROLL001')
+        self.assertEqual(student.student_rollNo, 'ROLL001')
         self.assertEqual(student.year, 2)
         self.assertEqual(student.dept, 'CS')
 
@@ -1600,7 +1633,7 @@ class UserDetailsTestCase(APITestCase):
         )
         self.student = Student.objects.create(
             user=self.user, email='me@test.com',
-            student_name='Me Student', rfid='RFID_ME',
+            student_name='Me Student', student_rollNo='RFID_ME',
             year=3, dept='IT', section='C'
         )
 
@@ -1765,9 +1798,9 @@ class StudentFilterTestCase(APITestCase):
         self.user = User.objects.create_user(username='admin_u', password='Pass123!')
         self.client.force_authenticate(user=self.user)
 
-        Student.objects.create(student_name='Alice', rfid='A001', year=1, dept='CS', section='A', email='alice@t.com')
-        Student.objects.create(student_name='Bob',   rfid='B001', year=1, dept='IT', section='A', email='bob@t.com')
-        Student.objects.create(student_name='Carol', rfid='C001', year=2, dept='CS', section='B', email='carol@t.com')
+        Student.objects.create(student_name='Alice', student_rollNo='A001', year=1, dept='CS', section='A', email='alice@t.com')
+        Student.objects.create(student_name='Bob',   student_rollNo='B001', year=1, dept='IT', section='A', email='bob@t.com')
+        Student.objects.create(student_name='Carol', student_rollNo='C001', year=2, dept='CS', section='B', email='carol@t.com')
 
     def test_filter_by_year(self):
         response = self.client.get('/api/students/?year=1')
@@ -1809,9 +1842,9 @@ class TeacherFilterTestCase(APITestCase):
         self.user = User.objects.create_user(username='admin_t', password='Pass123!')
         self.client.force_authenticate(user=self.user)
 
-        Teacher.objects.create(teacher_name='Prof. Smith', rfid='TS01', years='1,2', programs='CS,IT', email='smith@t.com')
-        Teacher.objects.create(teacher_name='Dr. Jones',   rfid='TJ01', years='3,4', programs='IT,DS', email='jones@t.com')
-        Teacher.objects.create(teacher_name='Mr. Ali',     rfid='TA01', years='1',   programs='CS',    email='ali@t.com')
+        Teacher.objects.create(teacher_name='Prof. Smith', teacher_rollNo='TS01', years='1,2', programs='CS,IT', email='smith@t.com')
+        Teacher.objects.create(teacher_name='Dr. Jones',   teacher_rollNo='TJ01', years='3,4', programs='IT,DS', email='jones@t.com')
+        Teacher.objects.create(teacher_name='Mr. Ali',     teacher_rollNo='TA01', years='1',   programs='CS',    email='ali@t.com')
 
     def test_filter_by_year(self):
         response = self.client.get('/api/teachers/?year=1')
@@ -1848,17 +1881,17 @@ class TeacherFilterTestCase(APITestCase):
 # ============ Tests for Attendance Summary Endpoints ============
 
 class StudentAttendanceSummaryTestCase(APITestCase):
-    """Tests for GET /api/attendance/student/?rfid=X"""
+    """Tests for GET /api/attendance/student/?student_rollNo=X"""
 
     def setUp(self):
         self.url = reverse('attendance-student-summary')
         self.user = User.objects.create_user(username='mgmt_att', password='Pass123!')
         self.client.force_authenticate(user=self.user)
 
-        self.teacher = Teacher.objects.create(teacher_name='Prof. A', rfid='T_ATT', email='att_t@t.com')
+        self.teacher = Teacher.objects.create(teacher_name='Prof. A', teacher_rollNo='T_ATT', email='att_t@t.com')
         self.course = Course.objects.create(course_code='CS101', course_name='Intro CS')
         self.student = Student.objects.create(
-            student_name='Test Stu', rfid='ROLL001', year=1, dept='CS', section='A', email='ts@t.com'
+            student_name='Test Stu', student_rollNo='ROLL001', year=1, dept='CS', section='A', email='ts@t.com'
         )
         # Create a StudentCourse with 2 classes attended out of 3 sessions
         self.sc = StudentCourse.objects.create(
@@ -1877,10 +1910,10 @@ class StudentAttendanceSummaryTestCase(APITestCase):
                 status='stopped'
             )
 
-    def test_summary_by_rfid(self):
-        response = self.client.get(f'{self.url}?rfid=ROLL001')
+    def test_summary_by_roll_no(self):
+        response = self.client.get(f'{self.url}?student_rollNo=ROLL001')
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data['rfid'], 'ROLL001')
+        self.assertEqual(response.data['student_rollNo'], 'ROLL001')
         self.assertEqual(response.data['name'], 'Test Stu')
         self.assertEqual(len(response.data['courses']), 1)
         course_info = response.data['courses'][0]
@@ -1888,17 +1921,17 @@ class StudentAttendanceSummaryTestCase(APITestCase):
         self.assertEqual(course_info['attended'], 2)
         self.assertEqual(course_info['total_sessions'], 3)
 
-    def test_missing_rfid_returns_400(self):
+    def test_missing_roll_no_returns_400(self):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 400)
 
-    def test_nonexistent_rfid_returns_404(self):
-        response = self.client.get(f'{self.url}?rfid=NONEXISTENT')
+    def test_nonexistent_roll_no_returns_404(self):
+        response = self.client.get(f'{self.url}?student_rollNo=NONEXISTENT')
         self.assertEqual(response.status_code, 404)
 
     def test_unauthenticated_denied(self):
         self.client.force_authenticate(user=None)
-        response = self.client.get(f'{self.url}?rfid=ROLL001')
+        response = self.client.get(f'{self.url}?student_rollNo=ROLL001')
         self.assertEqual(response.status_code, 401)
 
 
@@ -1910,10 +1943,10 @@ class CourseAttendanceSummaryTestCase(APITestCase):
         self.user = User.objects.create_user(username='mgmt_cat', password='Pass123!')
         self.client.force_authenticate(user=self.user)
 
-        self.teacher = Teacher.objects.create(teacher_name='Prof. B', rfid='T_CAT', email='cat_t@t.com')
+        self.teacher = Teacher.objects.create(teacher_name='Prof. B', teacher_rollNo='T_CAT', email='cat_t@t.com')
         self.course = Course.objects.create(course_code='IT201', course_name='Networks')
-        self.s1 = Student.objects.create(student_name='Stu One', rfid='S_ONE', year=2, dept='IT', section='A', email='s1@t.com')
-        self.s2 = Student.objects.create(student_name='Stu Two', rfid='S_TWO', year=2, dept='IT', section='A', email='s2@t.com')
+        self.s1 = Student.objects.create(student_name='Stu One', student_rollNo='S_ONE', year=2, dept='IT', section='A', email='s1@t.com')
+        self.s2 = Student.objects.create(student_name='Stu Two', student_rollNo='S_TWO', year=2, dept='IT', section='A', email='s2@t.com')
 
         StudentCourse.objects.create(student=self.s1, course=self.course, teacher=self.teacher, classes_attended='2024-01-01')
         StudentCourse.objects.create(student=self.s2, course=self.course, teacher=self.teacher, classes_attended='')

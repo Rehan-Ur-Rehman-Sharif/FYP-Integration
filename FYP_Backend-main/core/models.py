@@ -16,7 +16,7 @@ class Student(models.Model):
     student_name = models.CharField(max_length=255)
     email = models.EmailField(unique=True, null=True, blank=True)
     # image = models.ImageField(upload_to='student_images/', null=True, blank=True)  # for CV
-    rfid = models.CharField(max_length=100, unique=True)
+    student_rollNo = models.CharField(max_length=100, unique=True)
     overall_attendance = models.FloatField(default=0.0)  # percentage
     year = models.IntegerField()  # e.g., 1, 2, 3, 4
     dept = models.CharField(max_length=100)  # e.g., CS, IT
@@ -42,7 +42,7 @@ class Teacher(models.Model):
     teacher_name = models.CharField(max_length=255)
     email = models.EmailField(unique=True, null=True, blank=True)
     # image = models.ImageField(upload_to='teacher_images/', null=True, blank=True)
-    rfid = models.CharField(max_length=100, unique=True)
+    teacher_rollNo = models.CharField(max_length=100, unique=True)
     phone = models.CharField(max_length=20, blank=True, default='')
     years = models.CharField(max_length=255, blank=True, default='')     # comma-separated, e.g. "1,2,3"
     programs = models.CharField(max_length=255, blank=True, default='')  # comma-separated, e.g. "CS,IT"
@@ -91,6 +91,11 @@ class UpdateAttendanceRequest(models.Model):
         ('approved', 'Approved'),
         ('rejected', 'Rejected'),
     ]
+    
+    ATTENDANCE_TYPE_CHOICES = [
+        ('regular', 'Regular'),
+        ('compensatory', 'Compensatory'),
+    ]
 
     teacher = models.ForeignKey('Teacher', on_delete=models.CASCADE, related_name='attendance_update_requests')
     student = models.ForeignKey('Student', on_delete=models.CASCADE, related_name='attendance_update_requests')
@@ -98,6 +103,7 @@ class UpdateAttendanceRequest(models.Model):
     management = models.ForeignKey('Management', on_delete=models.SET_NULL, null=True, blank=True, related_name='attendance_requests')
     classes_to_add = models.CharField(max_length=255)  # e.g., "Class A, Class B" - classes to add to attendance
     reason = models.TextField(blank=True)  # Optional reason for the request
+    attendanceType = models.CharField(max_length=20, choices=ATTENDANCE_TYPE_CHOICES, default='regular')  # regular or compensatory
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
     requested_at = models.DateTimeField(auto_now_add=True)
     processed_at = models.DateTimeField(null=True, blank=True)

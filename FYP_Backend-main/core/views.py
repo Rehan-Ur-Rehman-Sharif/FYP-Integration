@@ -144,8 +144,8 @@ class UnifiedSignupView(APIView):
       "name": "...",
       "email": "...",
       "password": "...",
-      // Student extras: "id" (roll no / used as rfid), "year", "program" (dept), "section"
-      // Teacher extras: "id" (used as rfid)
+            // Student extras: "id" (used as student_rollNo), "year", "program" (dept), "section"
+            // Teacher extras: "id" (used as teacher_rollNo)
       // Admin extras: "university", "department"
     }
 
@@ -234,9 +234,9 @@ class UnifiedSignupView(APIView):
         return created_courses
 
     def _register_student(self, request, user, name, email, management=None):
-        rfid = request.data.get('id', '').strip() or f'S{user.id}'
-        if Student.objects.filter(rfid=rfid).exists():
-            rfid = f'{rfid}_{user.id}'
+        student_roll_no = request.data.get('id', '').strip() or f'S{user.id}'
+        if Student.objects.filter(student_rollNo=student_roll_no).exists():
+            student_roll_no = f'{student_roll_no}_{user.id}'
 
         year_raw = request.data.get('year', '1')
         try:
@@ -255,7 +255,7 @@ class UnifiedSignupView(APIView):
             user=user,
             email=email,
             student_name=name,
-            rfid=rfid,
+            student_rollNo=student_roll_no,
             year=year_int,
             dept=dept,
             section=section,
@@ -326,9 +326,9 @@ class UnifiedSignupView(APIView):
         }, status=status.HTTP_201_CREATED)
 
     def _register_teacher(self, request, user, name, email, management=None):
-        rfid = request.data.get('id', '').strip() or f'T{user.id}'
-        if Teacher.objects.filter(rfid=rfid).exists():
-            rfid = f'{rfid}_{user.id}'
+        teacher_roll_no = request.data.get('id', '').strip() or f'T{user.id}'
+        if Teacher.objects.filter(teacher_rollNo=teacher_roll_no).exists():
+            teacher_roll_no = f'{teacher_roll_no}_{user.id}'
 
         phone = request.data.get('phone', '').strip()
         years_raw = request.data.get('years', '').strip()
@@ -338,7 +338,7 @@ class UnifiedSignupView(APIView):
             user=user,
             email=email,
             teacher_name=name,
-            rfid=rfid,
+            teacher_rollNo=teacher_roll_no,
             phone=phone,
             years=years_raw,
             programs=programs_raw,
@@ -729,23 +729,32 @@ class UpdateAttendanceRequestViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = self.queryset
         user = self.request.user
+        requested_management_id = self.request.query_params.get('management_id') or self.request.query_params.get('management')
 
-        # If the authenticated user is management, restrict to their own requests
-        try:
-            management = Management.objects.get(user=user)
-            queryset = queryset.filter(management=management)
-        except Management.DoesNotExist:
-            pass
+        # Restrict visibility to management-owned requests only.
+        if user.is_superuser:
+            if requested_management_id:
+                queryset = queryset.filter(management_id=requested_management_id)
+        else:
+            management = Management.objects.filter(user=user).first()
+            if management:
+                # A management user can only query their own management_id.
+                if requested_management_id and str(management.Management_id) != str(requested_management_id):
+                    queryset = queryset.none()
+                else:
+                    queryset = queryset.filter(management=management)
+            else:
+                queryset = queryset.none()
 
         # Optional filters
-        teacher_id = self.request.query_params.get('teacher')
-        student_id = self.request.query_params.get('student')
+        teacher_roll_no = self.request.query_params.get('teacher_rollNo') or self.request.query_params.get('teacher')
+        student_roll_no = self.request.query_params.get('student_rollNo') or self.request.query_params.get('student')
         course_id = self.request.query_params.get('course')
         request_status = self.request.query_params.get('status')
-        if teacher_id:
-            queryset = queryset.filter(teacher_id=teacher_id)
-        if student_id:
-            queryset = queryset.filter(student_id=student_id)
+        if teacher_roll_no:
+            queryset = queryset.filter(teacher__teacher_rollNo=teacher_roll_no)
+        if student_roll_no:
+            queryset = queryset.filter(student__student_rollNo=student_roll_no)
         if course_id:
             queryset = queryset.filter(course_id=course_id)
         if request_status:
@@ -763,6 +772,15 @@ class UpdateAttendanceRequestViewSet(viewsets.ModelViewSet):
         from django.utils import timezone
         from django.http import Http404
 
+        # Ensure non-management users get an explicit authorization error.
+        try:
+            management = Management.objects.get(user=request.user)
+        except Management.DoesNotExist:
+            return Response(
+                {'error': 'Only management users can process attendance requests'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         try:
             attendance_request = self.get_object()
         except Http404:
@@ -775,15 +793,6 @@ class UpdateAttendanceRequestViewSet(viewsets.ModelViewSet):
             return Response(
                 {'error': f'Request has already been {attendance_request.status}'},
                 status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Get management user
-        try:
-            management = Management.objects.get(user=request.user)
-        except Management.DoesNotExist:
-            return Response(
-                {'error': 'Only management users can process attendance requests'},
-                status=status.HTTP_403_FORBIDDEN
             )
 
         if approve:
@@ -1051,12 +1060,12 @@ class RFIDScanView(APIView):
         rfid = serializer.validated_data['rfid']
         session_id = serializer.validated_data['session_id']
 
-        # Get student by RFID
+        # Get student by roll number encoded on the RFID card
         try:
-            student = Student.objects.get(rfid=rfid)
+            student = Student.objects.get(student_rollNo=rfid)
         except Student.DoesNotExist:
             return Response(
-                {'error': 'Student not found with this RFID'},
+                {'error': 'Student not found with this roll number'},
                 status=status.HTTP_404_NOT_FOUND
             )
 
@@ -1395,7 +1404,7 @@ class StudentAttendanceSummaryView(APIView):
     """
     Returns attendance summary for a student across all enrolled courses.
 
-    GET /api/attendance/student/?rfid=<roll_no>
+    GET /api/attendance/student/?student_rollNo=<roll_no>
          /api/attendance/student/?student_id=<pk>
 
     Used by the admin dashboard → View Attendance → Individual Student Search tab.
@@ -1403,18 +1412,18 @@ class StudentAttendanceSummaryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        rfid = request.query_params.get('rfid', '').strip()
+        student_roll_no = request.query_params.get('student_rollNo', '').strip() or request.query_params.get('rfid', '').strip()
         student_id = request.query_params.get('student_id', '').strip()
 
-        if not rfid and not student_id:
+        if not student_roll_no and not student_id:
             return Response(
-                {'error': 'Provide rfid (roll number) or student_id as query param'},
+                {'error': 'Provide student_rollNo or student_id as query param'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         try:
-            if rfid:
-                student = Student.objects.get(rfid=rfid)
+            if student_roll_no:
+                student = Student.objects.get(student_rollNo=student_roll_no)
             else:
                 student = Student.objects.get(student_id=student_id)
         except Student.DoesNotExist:
@@ -1448,7 +1457,7 @@ class StudentAttendanceSummaryView(APIView):
         data = {
             'student_id': student.student_id,
             'name': student.student_name,
-            'rfid': student.rfid,
+            'student_rollNo': student.student_rollNo,
             'year': student.year,
             'program': student.dept,
             'section': student.section,
@@ -1513,7 +1522,7 @@ class CourseAttendanceSummaryView(APIView):
 
             students_data.append({
                 'student_id': sc.student.student_id,
-                'roll': sc.student.rfid,
+                'roll': sc.student.student_rollNo,
                 'name': sc.student.student_name,
                 'year': sc.student.year,
                 'program': sc.student.dept,
@@ -1616,7 +1625,7 @@ def student_register_page(request):
         password = request.POST.get('password')
         password2 = request.POST.get('password2')
         student_name = request.POST.get('student_name')
-        rfid = request.POST.get('rfid')
+        student_roll_no = request.POST.get('student_rollNo')
         year = request.POST.get('year')
         dept = request.POST.get('dept')
         section = request.POST.get('section')
@@ -1649,7 +1658,7 @@ def student_register_page(request):
                     user=user,
                     email=email,
                     student_name=student_name,
-                    rfid=rfid,
+                    student_rollNo=student_roll_no,
                     year=int(year),
                     dept=dept,
                     section=section
@@ -1674,7 +1683,7 @@ def teacher_register_page(request):
         password = request.POST.get('password')
         password2 = request.POST.get('password2')
         teacher_name = request.POST.get('teacher_name')
-        rfid = request.POST.get('rfid')
+        teacher_roll_no = request.POST.get('teacher_rollNo')
         
         errors = []
         
@@ -1704,7 +1713,7 @@ def teacher_register_page(request):
                     user=user,
                     email=email,
                     teacher_name=teacher_name,
-                    rfid=rfid
+                    teacher_rollNo=teacher_roll_no
                 )
                 
                 messages.success(request, 'Registration successful! Please login.')
