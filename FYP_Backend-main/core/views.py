@@ -6,6 +6,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.utils import timezone
+from django.db import transaction
 from django.db.models import Q
 from django.http import HttpResponse
 from rest_framework import status, generics, viewsets
@@ -13,6 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
 import qrcode
 import io
@@ -172,6 +174,21 @@ class UnifiedSignupView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Student/teacher accounts can only be created by authenticated management.
+        management = None
+        if role in ('student', 'teacher'):
+            if not request.user or not request.user.is_authenticated:
+                return Response(
+                    {'error': 'Authentication required. Log in as management to register students/teachers.'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            management = Management.objects.filter(user=request.user).first()
+            if not management:
+                return Response(
+                    {'error': 'Only management users can register students/teachers.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
         if User.objects.filter(email=email).exists():
             return Response(
                 {'error': 'Email already exists'},
@@ -179,16 +196,6 @@ class UnifiedSignupView(APIView):
             )
 
         user = User.objects.create_user(username=email, email=email, password=password)
-
-        # Resolve the management instance that is registering this user.
-        # Priority: authenticated requesting user's management profile > explicit management_id param.
-        management = None
-        if request.user and request.user.is_authenticated:
-            management = Management.objects.filter(user=request.user).first()
-        if not management:
-            mgmt_id = request.data.get('management_id', '')
-            if mgmt_id:
-                management = Management.objects.filter(pk=mgmt_id).first()
 
         try:
             if role == 'student':
@@ -202,36 +209,92 @@ class UnifiedSignupView(APIView):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @staticmethod
-    def _parse_and_create_courses(courses_raw):
-        """
-        Parse a comma-separated course string like "CS301: Database, CS401: Algo"
-        into Course model objects (get_or_create), returning a list of dicts.
-        """
-        created_courses = []
+    def _parse_comma_list(value):
+        return [v.strip() for v in (value or '').split(',') if v.strip()]
+
+    @staticmethod
+    def _parse_courses_input(courses_raw):
+        """Parse courses from either string or array payloads."""
+        parsed_courses = []
         if not courses_raw:
-            return created_courses
-        for item in courses_raw.split(','):
+            return parsed_courses
+
+        if isinstance(courses_raw, list):
+            for item in courses_raw:
+                if isinstance(item, str):
+                    code = item.strip()
+                    if not code:
+                        continue
+                    parsed_courses.append({
+                        'course_id': None,
+                        'course_code': code,
+                        'course_name': '',
+                        'section': '',
+                        'year': None,
+                        'program': '',
+                    })
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                parsed_courses.append({
+                    'course_id': item.get('course_id'),
+                    'course_code': (item.get('course_code') or '').strip(),
+                    'course_name': (item.get('course_name') or '').strip(),
+                    'section': (item.get('section') or '').strip(),
+                    'year': item.get('year'),
+                    'program': (item.get('program') or '').strip(),
+                })
+            return parsed_courses
+
+        for item in str(courses_raw).split(','):
             item = item.strip()
             if not item:
                 continue
             if ':' in item:
                 code, _, cname = item.partition(':')
-                code = code.strip()
-                cname = cname.strip()
+                parsed_courses.append({'course_id': None, 'course_code': code.strip(), 'course_name': cname.strip(), 'section': '', 'year': None, 'program': ''})
             else:
-                code = ''
-                cname = item
+                parsed_courses.append({'course_id': None, 'course_code': '', 'course_name': item, 'section': '', 'year': None, 'program': ''})
+        return parsed_courses
 
-            if code:
-                course = Course.objects.filter(course_code=code).first()
-                if not course:
-                    course = Course.objects.create(course_code=code, course_name=cname or code)
-            else:
-                course = Course.objects.filter(course_name=cname).first()
-                if not course:
-                    course = Course.objects.create(course_code='', course_name=cname)
-            created_courses.append({'course_id': course.course_id, 'course_code': course.course_code, 'course_name': course.course_name})
-        return created_courses
+    @staticmethod
+    def _find_existing_course(course_id, course_code, course_name, management=None):
+        if course_id:
+            course_qs = Course.objects.filter(pk=course_id)
+            if management:
+                course_qs = course_qs.filter(
+                    Q(taught_courses__teacher__management=management) |
+                    Q(student_courses__student__management=management)
+                ).distinct()
+            return course_qs.first()
+
+        if management:
+            scoped_qs = Course.objects.filter(
+                Q(taught_courses__teacher__management=management) |
+                Q(student_courses__student__management=management)
+            ).distinct()
+            if course_code:
+                course = scoped_qs.filter(course_code=course_code).first()
+                if course:
+                    return course
+            if course_name:
+                course = scoped_qs.filter(course_name=course_name).first()
+                if course:
+                    return course
+            return None
+
+        if course_code:
+            return Course.objects.filter(course_code=course_code).first()
+        if course_name:
+            return Course.objects.filter(course_name=course_name).first()
+        return None
+
+    @staticmethod
+    def _program_matches(teacher_programs_raw, student_program):
+        if not student_program:
+            return True
+        teacher_programs = [p.lower() for p in UnifiedSignupView._parse_comma_list(teacher_programs_raw)]
+        return student_program.lower() in teacher_programs
 
     def _register_student(self, request, user, name, email, management=None):
         student_roll_no = request.data.get('id', '').strip() or f'S{user.id}'
@@ -262,59 +325,91 @@ class UnifiedSignupView(APIView):
             management=management,
         )
 
-        # Handle courses: create Course + StudentCourse entries
-        created_courses = []
-        for course_info in self._parse_and_create_courses(request.data.get('courses', '').strip()):
-            course = Course.objects.filter(pk=course_info['course_id']).first()
-            if course:
-                # 1st priority: same management + course + section + year + dept/year match
-                taught = TaughtCourse.objects.filter(
-                    course=course,
-                    section=student.section,
-                    year=student.year,
-                    teacher__programs__icontains=student.dept,
-                    teacher__years__icontains=str(student.year),
-                    **({'teacher__management': management} if management else {}),
-                ).first()
-                # 2nd priority: same management + course + section/year
-                if not taught and management:
-                    taught = TaughtCourse.objects.filter(
-                        course=course,
-                        section=student.section,
-                        year=student.year,
-                        teacher__management=management,
-                    ).first()
-                # 3rd priority: same management + course + dept/year match (diff section)
-                if not taught and management:
-                    taught = TaughtCourse.objects.filter(
-                        course=course,
-                        teacher__programs__icontains=student.dept,
-                        teacher__years__icontains=str(student.year),
-                        teacher__management=management,
-                    ).first()
-                # 4th priority (no management context): course + section/year + dept/year match
-                if not taught:
-                    taught = TaughtCourse.objects.filter(
-                        course=course,
-                        section=student.section,
-                        year=student.year,
-                        teacher__programs__icontains=student.dept,
-                        teacher__years__icontains=str(student.year),
-                    ).first()
-                # 5th priority: course + section/year only
-                if not taught:
-                    taught = TaughtCourse.objects.filter(
-                        course=course,
-                        section=student.section,
-                        year=student.year,
-                    ).first()
-                teacher = taught.teacher if taught else None
-                StudentCourse.objects.get_or_create(
-                    student=student,
-                    course=course,
-                    defaults={'teacher': teacher, 'classes_attended': ''}
-                )
-                created_courses.append(course_info)
+        # Student registration must only attach courses already taught by a teacher
+        # for the same section/year and compatible program (dept).
+        assigned_courses = []
+        skipped_courses = []
+        course_inputs = self._parse_courses_input(request.data.get('courses', ''))
+
+        for course_input in course_inputs:
+            course = self._find_existing_course(
+                course_id=course_input.get('course_id'),
+                course_code=course_input['course_code'],
+                course_name=course_input['course_name'],
+                management=management,
+            )
+
+            if not course:
+                skipped_courses.append({
+                    'course_code': course_input['course_code'],
+                    'course_name': course_input['course_name'],
+                    'reason': 'course_not_found',
+                })
+                continue
+
+            base_taught_qs = TaughtCourse.objects.filter(course=course).select_related('teacher')
+            if management:
+                base_taught_qs = base_taught_qs.filter(teacher__management=management)
+
+            offered_years = sorted({
+                y for y in base_taught_qs.values_list('year', flat=True) if y is not None
+            })
+            if offered_years and student.year not in offered_years:
+                skipped_courses.append({
+                    'course_id': course.course_id,
+                    'course_code': course.course_code,
+                    'course_name': course.course_name,
+                    'reason': 'student_year_not_eligible_for_course',
+                    'student_year': student.year,
+                    'allowed_years': offered_years,
+                })
+                continue
+
+            taught_qs = base_taught_qs.filter(
+                section=student.section,
+                year=student.year,
+            )
+
+            taught = None
+            for tc in taught_qs:
+                if tc.teacher and self._program_matches(tc.teacher.programs, student.dept):
+                    taught = tc
+                    break
+
+            if not taught or not taught.teacher_id:
+                skipped_courses.append({
+                    'course_id': course.course_id,
+                    'course_code': course.course_code,
+                    'course_name': course.course_name,
+                    'reason': 'no_teacher_mapping_for_student_section_year_program',
+                })
+                continue
+
+            student_course, created = StudentCourse.objects.get_or_create(
+                student=student,
+                course=course,
+                defaults={'teacher': taught.teacher, 'classes_attended': ''}
+            )
+
+            # Backfill missing teacher mapping on existing rows.
+            if not created and not student_course.teacher_id:
+                student_course.teacher = taught.teacher
+                student_course.save(update_fields=['teacher'])
+
+            assigned_courses.append({
+                'course_id': course.course_id,
+                'course_code': course.course_code,
+                'course_name': course.course_name,
+                'teacher_id': taught.teacher.teacher_id,
+                'teacher_name': taught.teacher.teacher_name,
+                'section': taught.section,
+                'year': taught.year,
+                'program': student.dept,
+            })
+
+        # If caller provided courses but none can be mapped, reject registration.
+        if course_inputs and not assigned_courses:
+            raise ValueError('No requested courses are mapped to a teacher for this student section/year/program')
 
         return Response({
             'message': 'Student registered successfully',
@@ -322,7 +417,8 @@ class UnifiedSignupView(APIView):
             'student_id': student.student_id,
             'name': student.student_name,
             'email': student.email,
-            'courses': created_courses,
+            'courses': assigned_courses,
+            'skipped_courses': skipped_courses,
         }, status=status.HTTP_201_CREATED)
 
     def _register_teacher(self, request, user, name, email, management=None):
@@ -331,8 +427,26 @@ class UnifiedSignupView(APIView):
             teacher_roll_no = f'{teacher_roll_no}_{user.id}'
 
         phone = request.data.get('phone', '').strip()
-        years_raw = request.data.get('years', '').strip()
-        programs_raw = request.data.get('programs', '').strip()
+        years_raw = (request.data.get('years', '') or '').strip()
+        programs_raw = (request.data.get('programs', '') or '').strip()
+        course_inputs = self._parse_courses_input(request.data.get('courses', ''))
+
+        # Allow courses payload to drive teacher profile metadata.
+        derived_years = []
+        derived_programs = []
+        for ci in course_inputs:
+            try:
+                if ci.get('year') is not None and str(ci.get('year')).strip() != '':
+                    derived_years.append(int(ci.get('year')))
+            except (ValueError, TypeError):
+                pass
+            if ci.get('program'):
+                derived_programs.append(ci.get('program').strip())
+
+        if not years_raw and derived_years:
+            years_raw = ','.join(str(y) for y in sorted(set(derived_years)))
+        if not programs_raw and derived_programs:
+            programs_raw = ','.join(sorted(set(derived_programs)))
 
         teacher = Teacher.objects.create(
             user=user,
@@ -345,17 +459,100 @@ class UnifiedSignupView(APIView):
             management=management,
         )
 
-        # Handle courses: create Course + TaughtCourse entries
+        # Course creation and taught-course mapping happen at teacher registration.
         created_courses = []
-        for course_info in self._parse_and_create_courses(request.data.get('courses', '').strip()):
-            course = Course.objects.filter(pk=course_info['course_id']).first()
-            if course:
-                TaughtCourse.objects.get_or_create(
-                    teacher=teacher,
-                    course=course,
-                    defaults={'classes_taken': '0'}
+        years = []
+        for y in self._parse_comma_list(years_raw):
+            try:
+                years.append(int(y))
+            except (ValueError, TypeError):
+                continue
+
+        sections = self._parse_comma_list(
+            request.data.get('sections', '').strip() or request.data.get('section', '').strip()
+        )
+        if not sections:
+            sections = ['A']
+
+        for course_input in course_inputs:
+            input_code = (course_input.get('course_code') or '').strip()
+            input_name = (course_input.get('course_name') or '').strip()
+
+            course = self._find_existing_course(
+                course_id=course_input.get('course_id'),
+                course_code=input_code,
+                course_name=input_name,
+                management=management,
+            )
+            if not course:
+                if not input_code and not input_name:
+                    raise ValueError('Each course must provide course_id or course_code/course_name')
+                course = Course.objects.create(
+                    course_code=input_code,
+                    course_name=input_name or input_code,
                 )
-                created_courses.append(course_info)
+            else:
+                update_fields = []
+                if input_code and not (course.course_code or '').strip():
+                    course.course_code = input_code
+                    update_fields.append('course_code')
+                if input_name and not (course.course_name or '').strip():
+                    course.course_name = input_name
+                    update_fields.append('course_name')
+                if update_fields:
+                    course.save(update_fields=update_fields)
+
+            per_course_sections = [course_input.get('section')] if course_input.get('section') else sections
+
+            per_course_years = []
+            try:
+                if course_input.get('year') is not None and str(course_input.get('year')).strip() != '':
+                    per_course_years = [int(course_input.get('year'))]
+            except (ValueError, TypeError):
+                per_course_years = []
+            if not per_course_years:
+                per_course_years = years
+
+            if per_course_years:
+                for year in per_course_years:
+                    for section in per_course_sections:
+                        taught_course, _ = TaughtCourse.objects.get_or_create(
+                            teacher=teacher,
+                            course=course,
+                            section=section,
+                            year=year,
+                            defaults={'classes_taken': '0'}
+                        )
+                        _auto_assign_teacher_to_student_courses(
+                            teacher=teacher,
+                            course=course,
+                            section=taught_course.section,
+                            year=taught_course.year,
+                        )
+            else:
+                for section in per_course_sections:
+                    taught_course, _ = TaughtCourse.objects.get_or_create(
+                        teacher=teacher,
+                        course=course,
+                        section=section,
+                        year=None,
+                        defaults={'classes_taken': '0'}
+                    )
+                    _auto_assign_teacher_to_student_courses(
+                        teacher=teacher,
+                        course=course,
+                        section=taught_course.section,
+                        year=taught_course.year,
+                    )
+
+            created_courses.append({
+                'course_id': course.course_id,
+                'course_code': course.course_code,
+                'course_name': course.course_name,
+                'sections': per_course_sections,
+                'years': per_course_years,
+                'programs': self._parse_comma_list(course_input.get('program') or programs_raw),
+            })
 
         return Response({
             'message': 'Teacher registered successfully',
@@ -455,6 +652,47 @@ class UserLogoutView(APIView):
         return Response({'message': 'Logged out successfully'}, status=status.HTTP_200_OK)
 
 
+def _get_management_for_user(user):
+    return Management.objects.filter(user=user).first()
+
+
+def _get_teacher_for_user(user):
+    return Teacher.objects.filter(user=user).first()
+
+
+def _get_student_for_user(user):
+    return Student.objects.filter(user=user).first()
+
+
+def _parse_programs(programs_raw):
+    return [p.strip() for p in (programs_raw or '').split(',') if p.strip()]
+
+
+def _auto_assign_teacher_to_student_courses(teacher, course, section=None, year=None):
+    """
+    Auto-map teacher to matching student-course rows for the same management,
+    course, section/year, and program.
+    """
+    if not teacher or not teacher.management_id or not course:
+        return 0
+
+    queryset = StudentCourse.objects.filter(
+        student__management=teacher.management,
+        course=course,
+    )
+
+    if section:
+        queryset = queryset.filter(student__section=section)
+    if year is not None:
+        queryset = queryset.filter(student__year=year)
+
+    programs = _parse_programs(teacher.programs)
+    if programs:
+        queryset = queryset.filter(student__dept__in=programs)
+
+    return queryset.update(teacher=teacher)
+
+
 # ============ CRUD ViewSets for all models ============
 
 class StudentViewSet(viewsets.ModelViewSet):
@@ -474,6 +712,13 @@ class StudentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset.all()
+
+        if not self.request.user.is_superuser:
+            management = _get_management_for_user(self.request.user)
+            if not management:
+                return queryset.none()
+            queryset = queryset.filter(management=management)
+
         # Optional filters – accept both 'dept' and 'program' (frontend uses 'program')
         year = self.request.query_params.get('year')
         dept = (
@@ -489,6 +734,24 @@ class StudentViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(section=section)
         return queryset
 
+    def perform_create(self, serializer):
+        management = _get_management_for_user(self.request.user)
+        if not management and not self.request.user.is_superuser:
+            raise DRFValidationError({'error': 'Only management users can create students'})
+        if self.request.user.is_superuser and not management:
+            serializer.save()
+            return
+        serializer.save(management=management)
+
+    def perform_update(self, serializer):
+        if self.request.user.is_superuser:
+            serializer.save()
+            return
+        management = _get_management_for_user(self.request.user)
+        if not management:
+            raise DRFValidationError({'error': 'Only management users can update students'})
+        serializer.save(management=management)
+
     @action(detail=True, methods=['patch'], url_path='update-courses')
     def update_courses(self, request, pk=None):
         """
@@ -499,67 +762,105 @@ class StudentViewSet(viewsets.ModelViewSet):
         new ones are created from the provided list.
         """
         student = self.get_object()
-        courses_raw = request.data.get('courses', '').strip()
+        courses_input = request.data.get('courses', '')
+        course_inputs = UnifiedSignupView._parse_courses_input(courses_input)
 
-        if not courses_raw:
+        if not course_inputs:
             return Response({'error': 'courses field is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Delete all existing StudentCourse records for this student
-        student.student_courses.all().delete()
 
         management = student.management
         created_courses = []
+        skipped_courses = []
+        assignments = []
 
-        for course_info in UnifiedSignupView._parse_and_create_courses(courses_raw):
-            course = Course.objects.filter(pk=course_info['course_id']).first()
+        for course_input in course_inputs:
+            course = UnifiedSignupView._find_existing_course(
+                course_id=course_input.get('course_id'),
+                course_code=course_input.get('course_code', ''),
+                course_name=course_input.get('course_name', ''),
+                management=management,
+            )
             if not course:
+                skipped_courses.append({
+                    'course_code': course_input.get('course_code', ''),
+                    'course_name': course_input.get('course_name', ''),
+                    'reason': 'course_not_found',
+                })
                 continue
 
-            # Teacher matching (same priority chain as registration)
-            taught = TaughtCourse.objects.filter(
+            base_taught_qs = TaughtCourse.objects.filter(
                 course=course,
+                teacher__management=management,
+            ).select_related('teacher')
+
+            offered_years = sorted({
+                y for y in base_taught_qs.values_list('year', flat=True) if y is not None
+            })
+            if offered_years and student.year not in offered_years:
+                skipped_courses.append({
+                    'course_id': course.course_id,
+                    'course_code': course.course_code,
+                    'course_name': course.course_name,
+                    'reason': 'student_year_not_eligible_for_course',
+                    'student_year': student.year,
+                    'allowed_years': offered_years,
+                })
+                continue
+
+            taught_qs = base_taught_qs.filter(
                 section=student.section,
                 year=student.year,
-                teacher__programs__icontains=student.dept,
-                teacher__years__icontains=str(student.year),
-                **({'teacher__management': management} if management else {}),
-            ).first()
-            if not taught and management:
-                taught = TaughtCourse.objects.filter(
-                    course=course, section=student.section, year=student.year,
-                    teacher__management=management,
-                ).first()
-            if not taught and management:
-                taught = TaughtCourse.objects.filter(
-                    course=course,
-                    teacher__programs__icontains=student.dept,
-                    teacher__years__icontains=str(student.year),
-                    teacher__management=management,
-                ).first()
-            if not taught:
-                taught = TaughtCourse.objects.filter(
-                    course=course, section=student.section, year=student.year,
-                    teacher__programs__icontains=student.dept,
-                    teacher__years__icontains=str(student.year),
-                ).first()
-            if not taught:
-                taught = TaughtCourse.objects.filter(
-                    course=course, section=student.section, year=student.year,
-                ).first()
-
-            teacher = taught.teacher if taught else None
-            StudentCourse.objects.create(
-                student=student,
-                course=course,
-                teacher=teacher,
-                classes_attended=''
             )
-            created_courses.append(course_info)
+
+            taught = None
+            for tc in taught_qs:
+                if tc.teacher and UnifiedSignupView._program_matches(tc.teacher.programs, student.dept):
+                    taught = tc
+                    break
+
+            if not taught or not taught.teacher_id:
+                skipped_courses.append({
+                    'course_id': course.course_id,
+                    'course_code': course.course_code,
+                    'course_name': course.course_name,
+                    'reason': 'no_teacher_mapping_for_student_section_year_program',
+                })
+                continue
+
+            assignments.append((course, taught.teacher))
+            created_courses.append({
+                'course_id': course.course_id,
+                'course_code': course.course_code,
+                'course_name': course.course_name,
+                'teacher_id': taught.teacher.teacher_id,
+                'teacher_name': taught.teacher.teacher_name,
+                'section': taught.section,
+                'year': taught.year,
+                'program': student.dept,
+            })
+
+        if not assignments:
+            return Response({
+                'error': 'No requested courses are mapped to a teacher for this student section/year/program',
+                'skipped_courses': skipped_courses,
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            # Replace only after validation succeeds.
+            student.student_courses.all().delete()
+            for course, teacher in assignments:
+                StudentCourse.objects.create(
+                    student=student,
+                    course=course,
+                    teacher=teacher,
+                    classes_attended=''
+                )
 
         return Response({
             'message': 'Courses updated successfully',
             'student_id': student.student_id,
             'courses': created_courses,
+            'skipped_courses': skipped_courses,
         }, status=status.HTTP_200_OK)
 
 
@@ -582,12 +883,16 @@ class TeacherViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = self.queryset.all()
 
+        if self.request.user.is_superuser:
+            management = None
+        else:
+            management = _get_management_for_user(self.request.user)
+            if not management:
+                return queryset.none()
+
         # Scope to the logged-in management's teachers
-        try:
-            management = Management.objects.get(user=self.request.user)
+        if management:
             queryset = queryset.filter(management=management)
-        except Management.DoesNotExist:
-            pass
 
         # Filter by year or program – stored as comma-separated strings, match whole values only
         # Accept both singular (?year=) and plural (?years=) param names
@@ -608,6 +913,238 @@ class TeacherViewSet(viewsets.ModelViewSet):
                 Q(programs__icontains=f',{program},')
             )
         return queryset
+
+    def perform_create(self, serializer):
+        management = _get_management_for_user(self.request.user)
+        if not management and not self.request.user.is_superuser:
+            raise DRFValidationError({'error': 'Only management users can create teachers'})
+        if self.request.user.is_superuser and not management:
+            serializer.save()
+            return
+        serializer.save(management=management)
+
+    def perform_update(self, serializer):
+        if self.request.user.is_superuser:
+            serializer.save()
+            return
+        management = _get_management_for_user(self.request.user)
+        if not management:
+            raise DRFValidationError({'error': 'Only management users can update teachers'})
+        serializer.save(management=management)
+
+    def _sync_teacher_courses_payload(self, teacher, payload):
+        management = teacher.management
+
+        courses_raw = payload.get('courses', None)
+        course_inputs = UnifiedSignupView._parse_courses_input(courses_raw)
+        if not course_inputs:
+            raise DRFValidationError({'error': 'courses field is required'})
+
+        global_sections = UnifiedSignupView._parse_comma_list(
+            (payload.get('sections', '') or '').strip() or (payload.get('section', '') or '').strip()
+        )
+        if not global_sections:
+            global_sections = ['A']
+
+        global_years = []
+        raw_years = UnifiedSignupView._parse_comma_list(
+            (payload.get('years', '') or '').strip() or (payload.get('year', '') or '').strip()
+        )
+        for y in raw_years:
+            try:
+                global_years.append(int(y))
+            except (ValueError, TypeError):
+                continue
+
+        if not global_years:
+            for y in UnifiedSignupView._parse_comma_list(teacher.years):
+                try:
+                    global_years.append(int(y))
+                except (ValueError, TypeError):
+                    continue
+
+        desired_entries = []
+        for course_input in course_inputs:
+            input_code = (course_input.get('course_code') or '').strip()
+            input_name = (course_input.get('course_name') or '').strip()
+
+            course = UnifiedSignupView._find_existing_course(
+                course_id=course_input.get('course_id'),
+                course_code=input_code,
+                course_name=input_name,
+                management=management,
+            )
+
+            if not course:
+                if not input_code and not input_name:
+                    raise DRFValidationError({'error': 'Each course must provide course_id or course_code/course_name'})
+                course = Course.objects.create(
+                    course_code=input_code,
+                    course_name=input_name or input_code,
+                )
+            else:
+                # Align with registration behavior: backfill blank code/name when payload provides values.
+                update_fields = []
+                if input_code and not (course.course_code or '').strip():
+                    course.course_code = input_code
+                    update_fields.append('course_code')
+                if input_name and not (course.course_name or '').strip():
+                    course.course_name = input_name
+                    update_fields.append('course_name')
+                if update_fields:
+                    course.save(update_fields=update_fields)
+
+            per_sections = [course_input.get('section')] if course_input.get('section') else global_sections
+
+            per_years = []
+            try:
+                if course_input.get('year') is not None and str(course_input.get('year')).strip() != '':
+                    per_years = [int(course_input.get('year'))]
+            except (ValueError, TypeError):
+                per_years = []
+            if not per_years:
+                per_years = global_years
+            if not per_years:
+                per_years = [None]
+
+            for section in per_sections:
+                for year in per_years:
+                    desired_entries.append((course, section, year))
+
+        desired_keys = {(c.course_id, s, y) for c, s, y in desired_entries}
+
+        existing_qs = teacher.taught_courses.select_related('course').all()
+        existing_map = {(tc.course_id, tc.section, tc.year): tc for tc in existing_qs}
+
+        added = []
+        kept = []
+        removed = []
+
+        with transaction.atomic():
+            # Remove mappings not listed in payload.
+            for key, tc in existing_map.items():
+                if key not in desired_keys:
+                    removed.append({
+                        'id': tc.id,
+                        'course_id': tc.course_id,
+                        'course_code': tc.course.course_code,
+                        'course_name': tc.course.course_name,
+                        'section': tc.section,
+                        'year': tc.year,
+                    })
+                    tc.delete()
+
+                    # If no teacher remains for this course in this management, clear teacher
+                    # assignments from student-course rows but keep student-course records.
+                    if not TaughtCourse.objects.filter(
+                        course_id=tc.course_id,
+                        teacher__management=management,
+                    ).exists():
+                        StudentCourse.objects.filter(
+                            student__management=management,
+                            course_id=tc.course_id,
+                        ).update(teacher=None)
+
+            # Add missing mappings and keep existing ones.
+            for course, section, year in desired_entries:
+                key = (course.course_id, section, year)
+                if key in existing_map:
+                    tc = existing_map[key]
+                    kept.append({
+                        'id': tc.id,
+                        'course_id': course.course_id,
+                        'course_code': course.course_code,
+                        'course_name': course.course_name,
+                        'section': section,
+                        'year': year,
+                    })
+                else:
+                    tc, _ = TaughtCourse.objects.get_or_create(
+                        teacher=teacher,
+                        course=course,
+                        section=section,
+                        year=year,
+                        defaults={'classes_taken': '0'}
+                    )
+                    added.append({
+                        'id': tc.id,
+                        'course_id': course.course_id,
+                        'course_code': course.course_code,
+                        'course_name': course.course_name,
+                        'section': section,
+                        'year': year,
+                    })
+
+                _auto_assign_teacher_to_student_courses(
+                    teacher=teacher,
+                    course=course,
+                    section=section,
+                    year=year,
+                )
+
+        return {
+            'added': added,
+            'kept': kept,
+            'removed': removed,
+        }
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+
+        response_data = self.get_serializer(serializer.instance).data
+        if 'courses' in request.data:
+            sync_result = self._sync_teacher_courses_payload(serializer.instance, request.data)
+            serializer.instance.refresh_from_db()
+            response_data = self.get_serializer(serializer.instance).data
+            response_data['courses_sync'] = sync_result
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['patch'], url_path='sync-courses')
+    def sync_courses(self, request, pk=None):
+        """
+        Replace teacher taught-course mappings by request body:
+        - keep mappings present in payload
+        - add missing mappings from payload
+        - remove mappings not present in payload
+        """
+        teacher = self.get_object()
+        sync_result = self._sync_teacher_courses_payload(teacher, request.data)
+
+        return Response({
+            'message': 'Teacher courses synchronized successfully',
+            'teacher_id': teacher.teacher_id,
+            'added': sync_result['added'],
+            'kept': sync_result['kept'],
+            'removed': sync_result['removed'],
+        }, status=status.HTTP_200_OK)
+
+    def destroy(self, request, *args, **kwargs):
+        teacher = self.get_object()
+        management = teacher.management
+        course_ids = list(teacher.taught_courses.values_list('course_id', flat=True).distinct())
+
+        with transaction.atomic():
+            response = super().destroy(request, *args, **kwargs)
+
+            # If no teacher remains for a course inside this management,
+            # keep student-course records but clear teacher assignment.
+            for course_id in course_ids:
+                other_exists = TaughtCourse.objects.filter(
+                    course_id=course_id,
+                    teacher__management=management,
+                ).exists()
+                if not other_exists:
+                    StudentCourse.objects.filter(
+                        student__management=management,
+                        course_id=course_id,
+                    ).update(teacher=None)
+
+        return response
 
 
 class ManagementViewSet(viewsets.ModelViewSet):
@@ -638,6 +1175,20 @@ class CourseViewSet(viewsets.ModelViewSet):
     queryset = Course.objects.all()
     serializer_class = CourseSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = self.queryset.all()
+        if self.request.user.is_superuser:
+            return queryset
+
+        management = _get_management_for_user(self.request.user)
+        if not management:
+            return queryset.none()
+
+        return queryset.filter(
+            Q(taught_courses__teacher__management=management) |
+            Q(student_courses__student__management=management)
+        ).distinct()
 
 
 class ClassViewSet(viewsets.ModelViewSet):
@@ -671,6 +1222,13 @@ class TaughtCourseViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset.all()
+
+        if not self.request.user.is_superuser:
+            management = _get_management_for_user(self.request.user)
+            if not management:
+                return queryset.none()
+            queryset = queryset.filter(teacher__management=management)
+
         # Optional filters
         course_id = self.request.query_params.get('course')
         teacher_id = self.request.query_params.get('teacher')
@@ -679,6 +1237,54 @@ class TaughtCourseViewSet(viewsets.ModelViewSet):
         if teacher_id:
             queryset = queryset.filter(teacher_id=teacher_id)
         return queryset
+
+    def perform_create(self, serializer):
+        if self.request.user.is_superuser:
+            taught = serializer.save()
+            _auto_assign_teacher_to_student_courses(
+                teacher=taught.teacher,
+                course=taught.course,
+                section=taught.section,
+                year=taught.year,
+            )
+            return
+        management = _get_management_for_user(self.request.user)
+        if not management:
+            raise DRFValidationError({'error': 'Only management users can create taught courses'})
+        teacher = serializer.validated_data.get('teacher')
+        if not teacher or teacher.management_id != management.Management_id:
+            raise DRFValidationError({'error': 'Teacher does not belong to your management'})
+        taught = serializer.save()
+        _auto_assign_teacher_to_student_courses(
+            teacher=taught.teacher,
+            course=taught.course,
+            section=taught.section,
+            year=taught.year,
+        )
+
+    def perform_update(self, serializer):
+        if self.request.user.is_superuser:
+            taught = serializer.save()
+            _auto_assign_teacher_to_student_courses(
+                teacher=taught.teacher,
+                course=taught.course,
+                section=taught.section,
+                year=taught.year,
+            )
+            return
+        management = _get_management_for_user(self.request.user)
+        if not management:
+            raise DRFValidationError({'error': 'Only management users can update taught courses'})
+        teacher = serializer.validated_data.get('teacher', serializer.instance.teacher)
+        if not teacher or teacher.management_id != management.Management_id:
+            raise DRFValidationError({'error': 'Teacher does not belong to your management'})
+        taught = serializer.save()
+        _auto_assign_teacher_to_student_courses(
+            teacher=taught.teacher,
+            course=taught.course,
+            section=taught.section,
+            year=taught.year,
+        )
 
 
 class StudentCourseViewSet(viewsets.ModelViewSet):
@@ -697,6 +1303,13 @@ class StudentCourseViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset.all()
+
+        if not self.request.user.is_superuser:
+            management = _get_management_for_user(self.request.user)
+            if not management:
+                return queryset.none()
+            queryset = queryset.filter(student__management=management)
+
         # Optional filters
         student_id = self.request.query_params.get('student')
         course_id = self.request.query_params.get('course')
@@ -708,6 +1321,38 @@ class StudentCourseViewSet(viewsets.ModelViewSet):
         if teacher_id:
             queryset = queryset.filter(teacher_id=teacher_id)
         return queryset
+
+    def perform_create(self, serializer):
+        if self.request.user.is_superuser:
+            serializer.save()
+            return
+        management = _get_management_for_user(self.request.user)
+        if not management:
+            raise DRFValidationError({'error': 'Only management users can create student-course mappings'})
+
+        student = serializer.validated_data.get('student')
+        teacher = serializer.validated_data.get('teacher')
+        if not student or student.management_id != management.Management_id:
+            raise DRFValidationError({'error': 'Student does not belong to your management'})
+        if teacher and teacher.management_id != management.Management_id:
+            raise DRFValidationError({'error': 'Teacher does not belong to your management'})
+        serializer.save()
+
+    def perform_update(self, serializer):
+        if self.request.user.is_superuser:
+            serializer.save()
+            return
+        management = _get_management_for_user(self.request.user)
+        if not management:
+            raise DRFValidationError({'error': 'Only management users can update student-course mappings'})
+
+        student = serializer.validated_data.get('student', serializer.instance.student)
+        teacher = serializer.validated_data.get('teacher', serializer.instance.teacher)
+        if not student or student.management_id != management.Management_id:
+            raise DRFValidationError({'error': 'Student does not belong to your management'})
+        if teacher and teacher.management_id != management.Management_id:
+            raise DRFValidationError({'error': 'Teacher does not belong to your management'})
+        serializer.save()
 
 
 class UpdateAttendanceRequestViewSet(viewsets.ModelViewSet):
@@ -765,6 +1410,12 @@ class UpdateAttendanceRequestViewSet(viewsets.ModelViewSet):
         """Auto-set management from the teacher's management on create"""
         teacher = serializer.validated_data.get('teacher')
         management = teacher.management if teacher else None
+        if not self.request.user.is_superuser:
+            current_management = _get_management_for_user(self.request.user)
+            if not current_management:
+                raise DRFValidationError({'error': 'Only management users can create attendance requests'})
+            if not management or management.Management_id != current_management.Management_id:
+                raise DRFValidationError({'error': 'Teacher does not belong to your management'})
         serializer.save(management=management)
 
     def _process_request(self, request, pk, approve):
@@ -861,6 +1512,17 @@ class AttendanceSessionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset.all()
+
+        if not self.request.user.is_superuser:
+            management = _get_management_for_user(self.request.user)
+            teacher_user = _get_teacher_for_user(self.request.user)
+            if management:
+                queryset = queryset.filter(teacher__management=management)
+            elif teacher_user:
+                queryset = queryset.filter(teacher=teacher_user)
+            else:
+                return queryset.none()
+
         # Optional filters
         teacher_id = self.request.query_params.get('teacher')
         course_id = self.request.query_params.get('course')
@@ -889,6 +1551,21 @@ class AttendanceSessionViewSet(viewsets.ModelViewSet):
         # Create the session without the token first
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
+            teacher = serializer.validated_data.get('teacher')
+
+            if not request.user.is_superuser:
+                management = _get_management_for_user(request.user)
+                teacher_user = _get_teacher_for_user(request.user)
+
+                if management:
+                    if not teacher or teacher.management_id != management.Management_id:
+                        return Response({'error': 'Teacher does not belong to your management'}, status=status.HTTP_403_FORBIDDEN)
+                elif teacher_user:
+                    if not teacher or teacher.teacher_id != teacher_user.teacher_id:
+                        return Response({'error': 'Teachers can only start their own sessions'}, status=status.HTTP_403_FORBIDDEN)
+                else:
+                    return Response({'error': 'Only management/teacher can create attendance sessions'}, status=status.HTTP_403_FORBIDDEN)
+
             # Save the session and set the token
             session = serializer.save(qr_code_token=qr_token, status='active')
             
@@ -1007,6 +1684,21 @@ class AttendanceRecordViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset.all()
+
+        if not self.request.user.is_superuser:
+            management = _get_management_for_user(self.request.user)
+            teacher_user = _get_teacher_for_user(self.request.user)
+            student_user = _get_student_for_user(self.request.user)
+
+            if management:
+                queryset = queryset.filter(session__teacher__management=management)
+            elif teacher_user:
+                queryset = queryset.filter(session__teacher=teacher_user)
+            elif student_user:
+                queryset = queryset.filter(student=student_user)
+            else:
+                return queryset.none()
+
         # Optional filters
         session_id = self.request.query_params.get('session')
         student_id = self.request.query_params.get('student')
@@ -1089,6 +1781,12 @@ class RFIDScanView(APIView):
         if student.section != session.section or student.year != session.year:
             return Response(
                 {'error': 'Student is not enrolled in this section/year'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if student.management_id != session.teacher.management_id:
+            return Response(
+                {'error': 'Student does not belong to this management'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -1184,6 +1882,12 @@ class QRScanView(APIView):
         if student.section != session.section or student.year != session.year:
             return Response(
                 {'error': 'Student is not enrolled in this section/year'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if student.management_id != session.teacher.management_id:
+            return Response(
+                {'error': 'Student does not belong to this management'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -1412,6 +2116,10 @@ class StudentAttendanceSummaryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        management = _get_management_for_user(request.user)
+        if not management and not request.user.is_superuser:
+            return Response({'error': 'Only management users can access student attendance summary'}, status=status.HTTP_403_FORBIDDEN)
+
         student_roll_no = request.query_params.get('student_rollNo', '').strip() or request.query_params.get('rfid', '').strip()
         student_id = request.query_params.get('student_id', '').strip()
 
@@ -1423,9 +2131,14 @@ class StudentAttendanceSummaryView(APIView):
 
         try:
             if student_roll_no:
-                student = Student.objects.get(student_rollNo=student_roll_no)
+                student_qs = Student.objects.filter(student_rollNo=student_roll_no)
             else:
-                student = Student.objects.get(student_id=student_id)
+                student_qs = Student.objects.filter(student_id=student_id)
+
+            if management and not request.user.is_superuser:
+                student_qs = student_qs.filter(management=management)
+
+            student = student_qs.get()
         except Student.DoesNotExist:
             return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -1493,6 +2206,10 @@ class CourseAttendanceSummaryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        management = _get_management_for_user(request.user)
+        if not management and not request.user.is_superuser:
+            return Response({'error': 'Only management users can access course attendance summary'}, status=status.HTTP_403_FORBIDDEN)
+
         course_code = request.query_params.get('course_code', '').strip()
         course_id = request.query_params.get('course_id', '').strip()
 
@@ -1504,17 +2221,27 @@ class CourseAttendanceSummaryView(APIView):
 
         try:
             if course_code:
-                course = Course.objects.get(course_code=course_code)
+                course_qs = Course.objects.filter(course_code=course_code)
             else:
-                course = Course.objects.get(course_id=course_id)
+                course_qs = Course.objects.filter(course_id=course_id)
+
+            if management and not request.user.is_superuser:
+                course_qs = course_qs.filter(taught_courses__teacher__management=management).distinct()
+
+            course = course_qs.get()
         except Course.DoesNotExist:
             return Response({'error': 'Course not found'}, status=status.HTTP_404_NOT_FOUND)
 
         # Total sessions held for this course
-        total_sessions = AttendanceSession.objects.filter(course=course).count()
+        sessions_qs = AttendanceSession.objects.filter(course=course)
+        if management and not request.user.is_superuser:
+            sessions_qs = sessions_qs.filter(teacher__management=management)
+        total_sessions = sessions_qs.count()
 
         # All students enrolled in this course via StudentCourse
         student_courses = StudentCourse.objects.filter(course=course).select_related('student')
+        if management and not request.user.is_superuser:
+            student_courses = student_courses.filter(student__management=management)
         students_data = []
         for sc in student_courses:
             _, attended = _classes_attended_count(sc.classes_attended)
