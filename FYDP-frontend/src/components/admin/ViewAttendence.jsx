@@ -26,7 +26,7 @@ const ViewAttendance = ({ years, batches, programs, courses, records }) => {
   const courseRecordsFallback = records ? (records[selectedCourse] || []) : [];
 
   /* ------------------------------------------------------------------
-     Individual student search – calls GET /api/attendance/student/?rfid=X
+    Individual student search – calls GET /api/attendance/student/?student_rollNo=X
   ------------------------------------------------------------------ */
   const handleIndividualSearch = async () => {
     if (!roll.trim()) {
@@ -38,7 +38,7 @@ const ViewAttendance = ({ years, batches, programs, courses, records }) => {
 
     try {
       const token = localStorage.getItem("accessToken");
-      const url = `${summaryApi.studentAttendance.url}?rfid=${encodeURIComponent(roll.trim())}`;
+      const url = `${summaryApi.studentAttendance.url}?student_rollNo=${encodeURIComponent(roll.trim())}`;
       const response = await fetch(url, {
         method: "GET",
         headers: {
@@ -119,7 +119,7 @@ const ViewAttendance = ({ years, batches, programs, courses, records }) => {
           {studentResult && (
             <div>
               <h4>
-                {studentResult.name} &nbsp;|&nbsp; Roll: {studentResult.rfid} &nbsp;|&nbsp;
+                {studentResult.name} &nbsp;|&nbsp; Roll: {studentResult.student_rollNo} &nbsp;|&nbsp;
                 Year {studentResult.year} &nbsp;|&nbsp; {studentResult.program} &nbsp;|&nbsp;
                 Section {studentResult.section}
               </h4>
@@ -172,8 +172,8 @@ const ViewAttendance = ({ years, batches, programs, courses, records }) => {
             </thead>
             <tbody>
               {courseRows.map(s => (
-                <tr key={s.roll || s.rfid}>
-                  <td>{s.roll || s.rfid}</td>
+                <tr key={s.roll || s.student_rollNo}>
+                  <td>{s.roll || s.student_rollNo}</td>
                   <td>{s.name}</td>
                   <td>{s.year || s.batch}</td>
                   <td>{s.program}</td>
@@ -191,7 +191,7 @@ const ViewAttendance = ({ years, batches, programs, courses, records }) => {
       {showAddModal && selectedStudent && (
         <AddAttendanceModal
           title="Add Attendance"
-          studentName={`${selectedStudent.name} (${selectedStudent.roll || selectedStudent.rfid})`}
+          studentName={`${selectedStudent.name} (${selectedStudent.roll || selectedStudent.student_rollNo})`}
           defaultCourse={selectedCourse}
           onClose={() => setShowAddModal(false)}
           onSubmit={(payload) => { console.log("Add attendance:", payload); setShowAddModal(false); alert("Attendance added (demo)."); }}

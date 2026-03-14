@@ -183,7 +183,7 @@ const ManageStudents = ({ years, programs, onRegister }) => {
         const data = await response.json();
         // Map backend fields to the frontend table shape
         const mapped = data.map(s => ({
-          id: s.rfid,
+          id: s.student_rollNo,
           name: s.student_name,
           year: String(s.year),
           program: s.program || s.dept,

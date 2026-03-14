@@ -164,7 +164,7 @@ const ManageTeachers = ({ programs = [], years = [] }) => {
         const data = await response.json();
         // Map backend fields to frontend table shape
         const mapped = data.map(t => ({
-          id: t.rfid,
+          id: t.teacher_rollNo,
           name: t.teacher_name,
           email: t.email || "",
           phone: t.phone || "",
