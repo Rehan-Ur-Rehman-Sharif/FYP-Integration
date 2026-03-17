@@ -63,7 +63,7 @@ class Management(models.Model):
 class TaughtCourse(models.Model):
     course = models.ForeignKey('Course', on_delete=models.CASCADE, related_name='taught_courses')
     teacher = models.ForeignKey('Teacher', on_delete=models.CASCADE, related_name='taught_courses')
-    classes_taken = models.CharField(max_length=255)  # e.g., "Class A, Class B"
+    classes_taken_count = models.PositiveIntegerField(default=0)
     section = models.CharField(max_length=10, blank=True)  # e.g., A, B, C
     year = models.IntegerField(null=True, blank=True)  # e.g., 1, 2, 3, 4
 
@@ -74,7 +74,7 @@ class StudentCourse(models.Model):
     student = models.ForeignKey('Student', on_delete=models.CASCADE, related_name='student_courses')
     course = models.ForeignKey('Course', on_delete=models.CASCADE, related_name='student_courses')
     teacher = models.ForeignKey('Teacher', on_delete=models.SET_NULL, null=True, blank=True, related_name='student_courses')
-    classes_attended = models.CharField(max_length=255, blank=True)  # e.g., "Class A, Class B"
+    classes_attended_count = models.PositiveIntegerField(default=0)
 
     def __str__(self):
         return f"{self.student} - {self.course} - {self.teacher}"
@@ -130,6 +130,7 @@ class AttendanceSession(models.Model):
     course = models.ForeignKey('Course', on_delete=models.CASCADE, related_name='attendance_sessions')
     section = models.CharField(max_length=10)  # e.g., A, B, C
     year = models.IntegerField()  # e.g., 1, 2, 3, 4
+    slot_count = models.PositiveIntegerField(default=1)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='active')
     qr_code_token = models.CharField(max_length=255, unique=True)  # Token for QR code validation
     started_at = models.DateTimeField(auto_now_add=True)

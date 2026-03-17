@@ -7,7 +7,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.http import HttpResponse
 from rest_framework import status, generics, viewsets
 from rest_framework.response import Response
@@ -38,6 +38,7 @@ from .serializers import (
     RFIDScanSerializer,
     QRScanSerializer,
     StudentAttendanceSummarySerializer,
+    StudentAttendanceSummaryListSerializer,
     CourseAttendanceSummarySerializer,
 )
 from .models import (
@@ -388,7 +389,7 @@ class UnifiedSignupView(APIView):
             student_course, created = StudentCourse.objects.get_or_create(
                 student=student,
                 course=course,
-                defaults={'teacher': taught.teacher, 'classes_attended': ''}
+                defaults={'teacher': taught.teacher, 'classes_attended_count': 0}
             )
 
             # Backfill missing teacher mapping on existing rows.
@@ -521,7 +522,7 @@ class UnifiedSignupView(APIView):
                             course=course,
                             section=section,
                             year=year,
-                            defaults={'classes_taken': '0'}
+                            defaults={'classes_taken_count': 0}
                         )
                         _auto_assign_teacher_to_student_courses(
                             teacher=teacher,
@@ -536,7 +537,7 @@ class UnifiedSignupView(APIView):
                         course=course,
                         section=section,
                         year=None,
-                        defaults={'classes_taken': '0'}
+                        defaults={'classes_taken_count': 0}
                     )
                     _auto_assign_teacher_to_student_courses(
                         teacher=teacher,
@@ -691,6 +692,10 @@ def _auto_assign_teacher_to_student_courses(teacher, course, section=None, year=
         queryset = queryset.filter(student__dept__in=programs)
 
     return queryset.update(teacher=teacher)
+
+
+def _count_csv_entries(value):
+    return len([item.strip() for item in (value or '').split(',') if item.strip()])
 
 
 # ============ CRUD ViewSets for all models ============
@@ -853,7 +858,7 @@ class StudentViewSet(viewsets.ModelViewSet):
                     student=student,
                     course=course,
                     teacher=teacher,
-                    classes_attended=''
+                    classes_attended_count=0
                 )
 
         return Response({
@@ -861,6 +866,75 @@ class StudentViewSet(viewsets.ModelViewSet):
             'student_id': student.student_id,
             'courses': created_courses,
             'skipped_courses': skipped_courses,
+        }, status=status.HTTP_200_OK)
+
+
+class StudentFilterOptionsView(APIView):
+    """
+    Returns unique student years and departments within the current management.
+
+    GET /api/students/filter-options/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if request.user.is_superuser:
+            student_qs = Student.objects.all()
+        else:
+            management = _get_management_for_user(request.user)
+            if not management:
+                return Response(
+                    {'error': 'Only management users can access student filter options'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            student_qs = Student.objects.filter(management=management)
+
+        years = sorted({year for year in student_qs.values_list('year', flat=True) if year is not None})
+        departments = sorted({dept for dept in student_qs.values_list('dept', flat=True) if dept})
+
+        return Response({
+            'years': years,
+            'departments': departments,
+            'programs': departments,
+        }, status=status.HTTP_200_OK)
+
+
+class TeacherFilterOptionsView(APIView):
+    """
+    Returns unique teacher years and programs within the current management.
+
+    GET /api/teachers/filter-options/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if request.user.is_superuser:
+            teacher_qs = Teacher.objects.all()
+        else:
+            management = _get_management_for_user(request.user)
+            if not management:
+                return Response(
+                    {'error': 'Only management users can access teacher filter options'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            teacher_qs = Teacher.objects.filter(management=management)
+
+        years = sorted({
+            int(year)
+            for raw_years in teacher_qs.values_list('years', flat=True)
+            for year in UnifiedSignupView._parse_comma_list(raw_years)
+            if str(year).isdigit()
+        })
+        programs = sorted({
+            program
+            for raw_programs in teacher_qs.values_list('programs', flat=True)
+            for program in UnifiedSignupView._parse_comma_list(raw_programs)
+            if program
+        })
+
+        return Response({
+            'years': years,
+            'programs': programs,
         }, status=status.HTTP_200_OK)
 
 
@@ -1064,7 +1138,7 @@ class TeacherViewSet(viewsets.ModelViewSet):
                         course=course,
                         section=section,
                         year=year,
-                        defaults={'classes_taken': '0'}
+                        defaults={'classes_taken_count': 0}
                     )
                     added.append({
                         'id': tc.id,
@@ -1448,25 +1522,22 @@ class UpdateAttendanceRequestViewSet(viewsets.ModelViewSet):
 
         if approve:
             # Approve: Update the student's attendance in the StudentCourse
+            added_count = len([c.strip() for c in (attendance_request.classes_to_add or '').split(',') if c.strip()])
             try:
                 student_course = StudentCourse.objects.get(
                     student=attendance_request.student,
                     course=attendance_request.course,
                     teacher=attendance_request.teacher
                 )
-                # Append the new classes to the existing attendance
-                if student_course.classes_attended:
-                    student_course.classes_attended = f"{student_course.classes_attended}, {attendance_request.classes_to_add}"
-                else:
-                    student_course.classes_attended = attendance_request.classes_to_add
-                student_course.save()
+                student_course.classes_attended_count = (student_course.classes_attended_count or 0) + added_count
+                student_course.save(update_fields=['classes_attended_count'])
             except StudentCourse.DoesNotExist:
                 # Create new StudentCourse record if it doesn't exist
                 StudentCourse.objects.create(
                     student=attendance_request.student,
                     course=attendance_request.course,
                     teacher=attendance_request.teacher,
-                    classes_attended=attendance_request.classes_to_add
+                    classes_attended_count=added_count,
                 )
             attendance_request.status = 'approved'
             message = 'Attendance request approved and attendance updated'
@@ -1568,6 +1639,17 @@ class AttendanceSessionViewSet(viewsets.ModelViewSet):
 
             # Save the session and set the token
             session = serializer.save(qr_code_token=qr_token, status='active')
+
+            slot_count = max(1, int(session.slot_count or 1))
+            taught_courses = TaughtCourse.objects.filter(
+                teacher=session.teacher,
+                course=session.course,
+                section=session.section,
+                year=session.year,
+            )
+            for taught_course in taught_courses:
+                taught_course.classes_taken_count = (taught_course.classes_taken_count or 0) + slot_count
+                taught_course.save(update_fields=['classes_taken_count'])
             
             # Return the updated serializer data
             response_serializer = self.get_serializer(session)
@@ -1725,7 +1807,7 @@ class RFIDScanView(APIView):
         """
         Helper method to mark attendance and update StudentCourse if both scans are complete.
         """
-        if record.rfid_scanned and record.qr_scanned:
+        if record.rfid_scanned and record.qr_scanned and not record.is_present:
             record.is_present = True
             record.marked_present_at = timezone.now()
             
@@ -1733,16 +1815,17 @@ class RFIDScanView(APIView):
             student_course, _ = StudentCourse.objects.get_or_create(
                 student=record.student,
                 course=session.course,
-                teacher=session.teacher
+                teacher=session.teacher,
+                defaults={'classes_attended_count': 0}
             )
             
-            # Append the session date to classes_attended
-            session_date = session.started_at.strftime('%Y-%m-%d')
-            if student_course.classes_attended:
-                student_course.classes_attended = f"{student_course.classes_attended}, {session_date}"
+            slot_count = max(1, int(getattr(session, 'slot_count', 1) or 1))
+            student_course.classes_attended_count = (student_course.classes_attended_count or 0) + slot_count
+            if student_course.teacher_id is None:
+                student_course.teacher = session.teacher
+                student_course.save(update_fields=['teacher', 'classes_attended_count'])
             else:
-                student_course.classes_attended = session_date
-            student_course.save()
+                student_course.save(update_fields=['classes_attended_count'])
 
     def post(self, request):
         serializer = RFIDScanSerializer(data=request.data)
@@ -1826,7 +1909,7 @@ class QRScanView(APIView):
         """
         Helper method to mark attendance and update StudentCourse if both scans are complete.
         """
-        if record.rfid_scanned and record.qr_scanned:
+        if record.rfid_scanned and record.qr_scanned and not record.is_present:
             record.is_present = True
             record.marked_present_at = timezone.now()
             
@@ -1834,16 +1917,17 @@ class QRScanView(APIView):
             student_course, _ = StudentCourse.objects.get_or_create(
                 student=record.student,
                 course=session.course,
-                teacher=session.teacher
+                teacher=session.teacher,
+                defaults={'classes_attended_count': 0}
             )
             
-            # Append the session date to classes_attended
-            session_date = session.started_at.strftime('%Y-%m-%d')
-            if student_course.classes_attended:
-                student_course.classes_attended = f"{student_course.classes_attended}, {session_date}"
+            slot_count = max(1, int(getattr(session, 'slot_count', 1) or 1))
+            student_course.classes_attended_count = (student_course.classes_attended_count or 0) + slot_count
+            if student_course.teacher_id is None:
+                student_course.teacher = session.teacher
+                student_course.save(update_fields=['teacher', 'classes_attended_count'])
             else:
-                student_course.classes_attended = session_date
-            student_course.save()
+                student_course.save(update_fields=['classes_attended_count'])
 
     def post(self, request):
         serializer = QRScanSerializer(data=request.data)
@@ -2106,68 +2190,49 @@ class ManagementLoginView(APIView):
 
 class StudentAttendanceSummaryView(APIView):
     """
-    Returns attendance summary for a student across all enrolled courses.
+    Returns attendance summary for one or more students across all enrolled courses.
 
     GET /api/attendance/student/?student_rollNo=<roll_no>
          /api/attendance/student/?student_id=<pk>
+         /api/attendance/student/?program=<dept>&year=<year>
+         /api/attendance/student/?student_rollNo=<roll_no>&program=<dept>&year=<year>
 
     Used by the admin dashboard → View Attendance → Individual Student Search tab.
     """
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        management = _get_management_for_user(request.user)
-        if not management and not request.user.is_superuser:
-            return Response({'error': 'Only management users can access student attendance summary'}, status=status.HTTP_403_FORBIDDEN)
-
-        student_roll_no = request.query_params.get('student_rollNo', '').strip() or request.query_params.get('rfid', '').strip()
-        student_id = request.query_params.get('student_id', '').strip()
-
-        if not student_roll_no and not student_id:
-            return Response(
-                {'error': 'Provide student_rollNo or student_id as query param'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            if student_roll_no:
-                student_qs = Student.objects.filter(student_rollNo=student_roll_no)
-            else:
-                student_qs = Student.objects.filter(student_id=student_id)
-
-            if management and not request.user.is_superuser:
-                student_qs = student_qs.filter(management=management)
-
-            student = student_qs.get()
-        except Student.DoesNotExist:
-            return Response({'error': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        # Build per-course attendance from StudentCourse + AttendanceRecord data
+    def _build_student_summary(self, student):
         student_courses = StudentCourse.objects.filter(student=student).select_related('course', 'teacher')
         courses_data = []
+
         for sc in student_courses:
-            attended_list, attended = _classes_attended_count(sc.classes_attended)
+            attended = sc.classes_attended_count or 0
 
-            # Count total sessions for this course/teacher combination
-            total_sessions = AttendanceSession.objects.filter(
+            session_qs = AttendanceSession.objects.filter(
                 course=sc.course,
-                teacher=sc.teacher
-            ).count()
+                section=student.section,
+                year=student.year,
+            )
+            if sc.teacher_id:
+                session_qs = session_qs.filter(teacher=sc.teacher)
+            elif student.management_id:
+                session_qs = session_qs.filter(teacher__management=student.management)
 
+            # classes_attended_count stores slots, so total must also be slots.
+            total_sessions = session_qs.aggregate(total=Sum('slot_count')).get('total') or 0
             percent = _attendance_percent(attended, total_sessions)
 
             courses_data.append({
                 'course_id': sc.course.course_id,
                 'course_code': sc.course.course_code,
                 'course_name': sc.course.course_name,
-                'teacher_name': sc.teacher.teacher_name,
-                'classes_attended_list': attended_list,
+                'teacher_name': sc.teacher.teacher_name if sc.teacher else '',
                 'attended': attended,
                 'total_sessions': total_sessions,
                 'percent': percent,
             })
 
-        data = {
+        return {
             'student_id': student.student_id,
             'name': student.student_name,
             'student_rollNo': student.student_rollNo,
@@ -2178,20 +2243,66 @@ class StudentAttendanceSummaryView(APIView):
             'overall_attendance': student.overall_attendance,
             'courses': courses_data,
         }
-        serializer = StudentAttendanceSummarySerializer(data)
+
+    def get(self, request):
+        management = _get_management_for_user(request.user)
+        if not management and not request.user.is_superuser:
+            return Response({'error': 'Only management users can access student attendance summary'}, status=status.HTTP_403_FORBIDDEN)
+
+        student_roll_no = request.query_params.get('student_rollNo', '').strip() or request.query_params.get('rfid', '').strip()
+        student_id = request.query_params.get('student_id', '').strip()
+        program = (request.query_params.get('program', '') or request.query_params.get('dept', '')).strip()
+        year = request.query_params.get('year', '').strip()
+
+        if not student_roll_no and not student_id and not program and not year:
+            return Response(
+                {'error': 'Provide at least one of student_rollNo, student_id, program, or year as query param'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        student_qs = Student.objects.all()
+        if management and not request.user.is_superuser:
+            student_qs = student_qs.filter(management=management)
+
+        if student_roll_no:
+            student_qs = student_qs.filter(student_rollNo=student_roll_no)
+        if student_id:
+            student_qs = student_qs.filter(student_id=student_id)
+        if program:
+            student_qs = student_qs.filter(dept=program)
+        if year:
+            student_qs = student_qs.filter(year=year)
+
+        students = list(student_qs.order_by('student_id'))
+        if not students:
+            return Response({'error': 'No students found for the provided filters'}, status=status.HTTP_404_NOT_FOUND)
+
+        summaries = [self._build_student_summary(student) for student in students]
+
+        is_legacy_single_lookup = bool(student_roll_no or student_id) and not program and not year and len(summaries) == 1
+        if is_legacy_single_lookup:
+            serializer = StudentAttendanceSummarySerializer(summaries[0])
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        response_data = {
+            'count': len(summaries),
+            'filters': {
+                key: value for key, value in {
+                    'student_rollNo': student_roll_no,
+                    'student_id': student_id,
+                    'program': program,
+                    'year': year,
+                }.items() if value not in ('', None)
+            },
+            'students': summaries,
+        }
+        serializer = StudentAttendanceSummaryListSerializer(response_data)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 def _attendance_percent(attended, total_sessions):
     """Return attendance percentage (0–100 rounded to 1 dp), avoiding division by zero."""
     return round(attended / total_sessions * 100, 1) if total_sessions > 0 else 0.0
-
-
-def _classes_attended_count(classes_attended_str):
-    """Parse a comma-separated attendance string and return (list_of_dates, count)."""
-    attended_list = [d.strip() for d in classes_attended_str.split(',') if d.strip()] \
-        if classes_attended_str else []
-    return attended_list, len(attended_list)
 
 
 class CourseAttendanceSummaryView(APIView):
@@ -2236,7 +2347,9 @@ class CourseAttendanceSummaryView(APIView):
         sessions_qs = AttendanceSession.objects.filter(course=course)
         if management and not request.user.is_superuser:
             sessions_qs = sessions_qs.filter(teacher__management=management)
-        total_sessions = sessions_qs.count()
+        # Keep response key name as total_sessions for frontend compatibility,
+        # but value represents total slots taught.
+        total_sessions = sessions_qs.aggregate(total=Sum('slot_count')).get('total') or 0
 
         # All students enrolled in this course via StudentCourse
         student_courses = StudentCourse.objects.filter(course=course).select_related('student')
@@ -2244,7 +2357,7 @@ class CourseAttendanceSummaryView(APIView):
             student_courses = student_courses.filter(student__management=management)
         students_data = []
         for sc in student_courses:
-            _, attended = _classes_attended_count(sc.classes_attended)
+            attended = sc.classes_attended_count or 0
             percent = _attendance_percent(attended, total_sessions)
 
             students_data.append({
@@ -2524,8 +2637,8 @@ def student_dashboard(request):
             
             if taught_course:
                 # Parse classes attended and classes taken
-                classes_attended = len(sc.classes_attended.split(',')) if sc.classes_attended else 0
-                classes_taken = len(taught_course.classes_taken.split(',')) if taught_course.classes_taken else 0
+                classes_attended = sc.classes_attended_count or 0
+                classes_taken = taught_course.classes_taken_count or 0
                 
                 attendance_percentage = (classes_attended / classes_taken * 100) if classes_taken > 0 else 0
             else:
@@ -2566,7 +2679,7 @@ def teacher_dashboard(request):
         for tc in taught_courses:
             courses.append({
                 'course_name': tc.course.course_name,
-                'classes_taken': tc.classes_taken if tc.classes_taken else 'None'
+                'classes_taken_count': tc.classes_taken_count or 0
             })
         
         context = {

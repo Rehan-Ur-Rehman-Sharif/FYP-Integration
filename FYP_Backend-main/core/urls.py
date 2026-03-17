@@ -33,6 +33,8 @@ from .views import (
     UnifiedSignupView,
     UserDetailsView,
     UserLogoutView,
+    StudentFilterOptionsView,
+    TeacherFilterOptionsView,
     StudentAttendanceSummaryView,
     CourseAttendanceSummaryView,
 )
@@ -57,6 +59,10 @@ urlpatterns = [
     path('signup', UnifiedSignupView.as_view(), name='unified-signup'),
     path('user-details', UserDetailsView.as_view(), name='user-details'),
     path('user-logout', UserLogoutView.as_view(), name='user-logout'),
+
+    # Explicit filter option endpoints must appear before router detail routes.
+    path('students/filter-options/', StudentFilterOptionsView.as_view(), name='student-filter-options'),
+    path('teachers/filter-options/', TeacherFilterOptionsView.as_view(), name='teacher-filter-options'),
 
     # CRUD API endpoints (from router)
     path('', include(router.urls)),

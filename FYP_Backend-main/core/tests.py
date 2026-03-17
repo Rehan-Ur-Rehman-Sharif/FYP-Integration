@@ -453,12 +453,24 @@ class TaughtCourseCRUDTestCase(AuthenticatedAPITestCase):
     
     def setUp(self):
         super().setUp()
+        self.management = Management.objects.create(
+            user=self.user,
+            Management_name='Scoped Management',
+            email='scoped-management@test.com'
+        )
         self.course = Course.objects.create(course_name='Test Course')
-        self.teacher = Teacher.objects.create(teacher_name='Test Teacher', email='teacher@test.com', teacher_rollNo='RFID001')
+        self.teacher = Teacher.objects.create(
+            teacher_name='Test Teacher',
+            email='teacher@test.com',
+            teacher_rollNo='RFID001',
+            management=self.management,
+        )
         self.taught_course = TaughtCourse.objects.create(
             course=self.course,
             teacher=self.teacher,
-            classes_taken='Class A, Class B'
+            classes_taken_count=2,
+            section='A',
+            year=1,
         )
         self.list_url = reverse('taughtcourse-list')
         self.detail_url = reverse('taughtcourse-detail', args=[self.taught_course.id])
@@ -471,8 +483,19 @@ class TaughtCourseCRUDTestCase(AuthenticatedAPITestCase):
     
     def test_create_taught_course(self):
         """Test creating a taught course"""
-        new_teacher = Teacher.objects.create(teacher_name='New Teacher', email='new@test.com', teacher_rollNo='RFID002')
-        data = {'course': self.course.course_id, 'teacher': new_teacher.teacher_id, 'classes_taken': 'Class C'}
+        new_teacher = Teacher.objects.create(
+            teacher_name='New Teacher',
+            email='new@test.com',
+            teacher_rollNo='RFID002',
+            management=self.management,
+        )
+        data = {
+            'course': self.course.course_id,
+            'teacher': new_teacher.teacher_id,
+            'classes_taken_count': 1,
+            'section': 'B',
+            'year': 2,
+        }
         response = self.client.post(self.list_url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
     
@@ -485,10 +508,16 @@ class TaughtCourseCRUDTestCase(AuthenticatedAPITestCase):
     
     def test_update_taught_course(self):
         """Test updating a taught course"""
-        data = {'course': self.course.course_id, 'teacher': self.teacher.teacher_id, 'classes_taken': 'Class D, Class E'}
+        data = {
+            'course': self.course.course_id,
+            'teacher': self.teacher.teacher_id,
+            'classes_taken_count': 2,
+            'section': 'A',
+            'year': 1,
+        }
         response = self.client.put(self.detail_url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['classes_taken'], 'Class D, Class E')
+        self.assertEqual(response.data['classes_taken_count'], 2)
     
     def test_delete_taught_course(self):
         """Test deleting a taught course"""
@@ -507,14 +536,32 @@ class StudentCourseCRUDTestCase(AuthenticatedAPITestCase):
     
     def setUp(self):
         super().setUp()
-        self.student = Student.objects.create(student_name='Test Student', email='student@test.com', student_rollNo='RFID001', year=1, dept='CS', section='A')
+        self.management = Management.objects.create(
+            user=self.user,
+            Management_name='Student Course Management',
+            email='student-course-management@test.com'
+        )
+        self.student = Student.objects.create(
+            student_name='Test Student',
+            email='student@test.com',
+            student_rollNo='RFID001',
+            year=1,
+            dept='CS',
+            section='A',
+            management=self.management,
+        )
         self.course = Course.objects.create(course_name='Test Course')
-        self.teacher = Teacher.objects.create(teacher_name='Test Teacher', email='teacher@test.com', teacher_rollNo='RFID002')
+        self.teacher = Teacher.objects.create(
+            teacher_name='Test Teacher',
+            email='teacher@test.com',
+            teacher_rollNo='RFID002',
+            management=self.management,
+        )
         self.student_course = StudentCourse.objects.create(
             student=self.student,
             course=self.course,
             teacher=self.teacher,
-            classes_attended='Class A'
+            classes_attended_count=1
         )
         self.list_url = reverse('studentcourse-list')
         self.detail_url = reverse('studentcourse-detail', args=[self.student_course.id])
@@ -527,8 +574,16 @@ class StudentCourseCRUDTestCase(AuthenticatedAPITestCase):
     
     def test_create_student_course(self):
         """Test creating a student course"""
-        new_student = Student.objects.create(student_name='New Student', email='new@test.com', student_rollNo='RFID003', year=2, dept='IT', section='B')
-        data = {'student': new_student.student_id, 'course': self.course.course_id, 'teacher': self.teacher.teacher_id, 'classes_attended': 'Class B'}
+        new_student = Student.objects.create(
+            student_name='New Student',
+            email='new@test.com',
+            student_rollNo='RFID003',
+            year=2,
+            dept='IT',
+            section='B',
+            management=self.management,
+        )
+        data = {'student': new_student.student_id, 'course': self.course.course_id, 'teacher': self.teacher.teacher_id, 'classes_attended_count': 1}
         response = self.client.post(self.list_url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
     
@@ -542,10 +597,10 @@ class StudentCourseCRUDTestCase(AuthenticatedAPITestCase):
     
     def test_update_student_course(self):
         """Test updating a student course"""
-        data = {'student': self.student.student_id, 'course': self.course.course_id, 'teacher': self.teacher.teacher_id, 'classes_attended': 'Class A, Class B'}
+        data = {'student': self.student.student_id, 'course': self.course.course_id, 'teacher': self.teacher.teacher_id, 'classes_attended_count': 2}
         response = self.client.put(self.detail_url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['classes_attended'], 'Class A, Class B')
+        self.assertEqual(response.data['classes_attended_count'], 2)
     
     def test_delete_student_course(self):
         """Test deleting a student course"""
@@ -745,7 +800,8 @@ class UpdateAttendanceRequestApproveRejectTestCase(APITestCase):
         self.teacher = Teacher.objects.create(
             teacher_name='Test Teacher',
             email='teacher@test.com',
-            teacher_rollNo='RFID001'
+            teacher_rollNo='RFID001',
+            management=self.management,
         )
         self.student = Student.objects.create(
             student_name='Test Student',
@@ -753,7 +809,8 @@ class UpdateAttendanceRequestApproveRejectTestCase(APITestCase):
             student_rollNo='RFID002',
             year=1,
             dept='CS',
-            section='A'
+            section='A',
+            management=self.management,
         )
         self.course = Course.objects.create(course_name='Test Course')
         
@@ -762,6 +819,7 @@ class UpdateAttendanceRequestApproveRejectTestCase(APITestCase):
             teacher=self.teacher,
             student=self.student,
             course=self.course,
+            management=self.management,
             classes_to_add='Class A, Class B',
             reason='Student was marked absent by mistake'
         )
@@ -783,7 +841,7 @@ class UpdateAttendanceRequestApproveRejectTestCase(APITestCase):
             course=self.course,
             teacher=self.teacher
         )
-        self.assertEqual(student_course.classes_attended, 'Class A, Class B')
+        self.assertEqual(student_course.classes_attended_count, 2)
         
         # Verify the request was updated
         self.attendance_request.refresh_from_db()
@@ -798,7 +856,7 @@ class UpdateAttendanceRequestApproveRejectTestCase(APITestCase):
             student=self.student,
             course=self.course,
             teacher=self.teacher,
-            classes_attended='Class X'
+            classes_attended_count=1
         )
         
         self.client.force_authenticate(user=self.management_user)
@@ -808,7 +866,7 @@ class UpdateAttendanceRequestApproveRejectTestCase(APITestCase):
         
         # Verify attendance was appended
         student_course.refresh_from_db()
-        self.assertEqual(student_course.classes_attended, 'Class X, Class A, Class B')
+        self.assertEqual(student_course.classes_attended_count, 3)
     
     def test_reject_request_by_management(self):
         """Test that management can reject attendance requests"""
@@ -1274,8 +1332,7 @@ class TwoFactorAttendanceTestCase(APITestCase):
             course=self.course,
             teacher=self.teacher
         )
-        self.assertIsNotNone(student_course.classes_attended)
-        self.assertIn(self.session.started_at.strftime('%Y-%m-%d'), student_course.classes_attended)
+        self.assertEqual(student_course.classes_attended_count, 1)
     
     def test_qr_then_rfid_marks_present(self):
         """Test that scanning QR first then RFID also marks present"""
@@ -1833,6 +1890,105 @@ class StudentFilterTestCase(APITestCase):
         self.assertEqual(response.data[0]['program'], 'CS')
 
 
+class StudentFilterOptionsTestCase(APITestCase):
+    """Tests for GET /api/students/filter-options/ within a management."""
+
+    def setUp(self):
+        self.url = reverse('student-filter-options')
+        self.user = User.objects.create_user(username='filter_admin', password='Pass123!')
+        self.client.force_authenticate(user=self.user)
+        self.management = Management.objects.create(
+            user=self.user,
+            Management_name='Filter Management',
+            email='filter_admin@test.com'
+        )
+
+        Student.objects.create(
+            student_name='Alice', student_rollNo='FA001', year=1, dept='CS', section='A', email='alice_filter@t.com',
+            management=self.management,
+        )
+        Student.objects.create(
+            student_name='Bob', student_rollNo='FB001', year=2, dept='IT', section='A', email='bob_filter@t.com',
+            management=self.management,
+        )
+        Student.objects.create(
+            student_name='Carol', student_rollNo='FC001', year=1, dept='CS', section='B', email='carol_filter@t.com',
+            management=self.management,
+        )
+
+        other_user = User.objects.create_user(username='other_filter_admin', password='Pass123!')
+        other_management = Management.objects.create(
+            user=other_user,
+            Management_name='Other Filter Management',
+            email='other_filter_admin@test.com'
+        )
+        Student.objects.create(
+            student_name='Hidden', student_rollNo='FH001', year=4, dept='SE', section='A', email='hidden_filter@t.com',
+            management=other_management,
+        )
+
+    def test_returns_unique_years_and_departments_for_management(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['years'], [1, 2])
+        self.assertEqual(response.data['departments'], ['CS', 'IT'])
+        self.assertEqual(response.data['programs'], ['CS', 'IT'])
+
+    def test_non_management_user_gets_403(self):
+        self.client.force_authenticate(user=User.objects.create_user(username='plain_user', password='Pass123!'))
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 403)
+
+
+class TeacherFilterOptionsTestCase(APITestCase):
+    """Tests for GET /api/teachers/filter-options/ within a management."""
+
+    def setUp(self):
+        self.url = reverse('teacher-filter-options')
+        self.user = User.objects.create_user(username='teacher_filter_admin', password='Pass123!')
+        self.client.force_authenticate(user=self.user)
+        self.management = Management.objects.create(
+            user=self.user,
+            Management_name='Teacher Filter Management',
+            email='teacher_filter_admin@test.com'
+        )
+
+        Teacher.objects.create(
+            teacher_name='Prof. Smith', teacher_rollNo='TF001', years='1,2', programs='CS,IT', email='smith_filter@t.com',
+            management=self.management,
+        )
+        Teacher.objects.create(
+            teacher_name='Dr. Jones', teacher_rollNo='TF002', years='2,4', programs='IT,DS', email='jones_filter@t.com',
+            management=self.management,
+        )
+        Teacher.objects.create(
+            teacher_name='Mr. Ali', teacher_rollNo='TF003', years='1', programs='CS', email='ali_filter@t.com',
+            management=self.management,
+        )
+
+        other_user = User.objects.create_user(username='other_teacher_filter_admin', password='Pass123!')
+        other_management = Management.objects.create(
+            user=other_user,
+            Management_name='Other Teacher Filter Management',
+            email='other_teacher_filter_admin@test.com'
+        )
+        Teacher.objects.create(
+            teacher_name='Hidden Prof', teacher_rollNo='TF004', years='5', programs='SE', email='hidden_filter@t.com',
+            management=other_management,
+        )
+
+    def test_returns_unique_years_and_programs_for_management(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['years'], [1, 2, 4])
+        self.assertEqual(response.data['programs'], ['CS', 'DS', 'IT'])
+
+    def test_non_management_user_gets_403(self):
+        self.client.force_authenticate(user=User.objects.create_user(username='plain_teacher_user', password='Pass123!'))
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 403)
+
+
 # ============ Tests for Teacher Filtering via Backend ============
 
 class TeacherFilterTestCase(APITestCase):
@@ -1887,26 +2043,76 @@ class StudentAttendanceSummaryTestCase(APITestCase):
         self.url = reverse('attendance-student-summary')
         self.user = User.objects.create_user(username='mgmt_att', password='Pass123!')
         self.client.force_authenticate(user=self.user)
+        self.management = Management.objects.create(
+            user=self.user,
+            Management_name='Attendance Management',
+            email='mgmt_att@test.com'
+        )
 
-        self.teacher = Teacher.objects.create(teacher_name='Prof. A', teacher_rollNo='T_ATT', email='att_t@t.com')
+        self.teacher = Teacher.objects.create(
+            teacher_name='Prof. A',
+            teacher_rollNo='T_ATT',
+            email='att_t@t.com',
+            management=self.management,
+        )
         self.course = Course.objects.create(course_code='CS101', course_name='Intro CS')
         self.student = Student.objects.create(
-            student_name='Test Stu', student_rollNo='ROLL001', year=1, dept='CS', section='A', email='ts@t.com'
+            student_name='Test Stu', student_rollNo='ROLL001', year=1, dept='CS', section='A', email='ts@t.com',
+            management=self.management,
         )
-        # Create a StudentCourse with 2 classes attended out of 3 sessions
+        self.second_student = Student.objects.create(
+            student_name='Other Stu', student_rollNo='ROLL002', year=1, dept='CS', section='A', email='other@t.com',
+            management=self.management,
+        )
+        self.other_management_user = User.objects.create_user(username='mgmt_other', password='Pass123!')
+        self.other_management = Management.objects.create(
+            user=self.other_management_user,
+            Management_name='Other Management',
+            email='mgmt_other@test.com'
+        )
+        self.other_teacher = Teacher.objects.create(
+            teacher_name='Prof. Other',
+            teacher_rollNo='T_OTHER',
+            email='other_teacher@t.com',
+            management=self.other_management,
+        )
+        self.other_student = Student.objects.create(
+            student_name='Hidden Stu', student_rollNo='ROLL003', year=1, dept='CS', section='A', email='hidden@t.com',
+            management=self.other_management,
+        )
+
         self.sc = StudentCourse.objects.create(
             student=self.student,
             course=self.course,
             teacher=self.teacher,
-            classes_attended='2024-01-01, 2024-01-08'
+            classes_attended_count=2
         )
-        # Create 3 sessions so total_sessions=3
+        self.second_sc = StudentCourse.objects.create(
+            student=self.second_student,
+            course=self.course,
+            teacher=self.teacher,
+            classes_attended_count=1
+        )
+        StudentCourse.objects.create(
+            student=self.other_student,
+            course=self.course,
+            teacher=self.other_teacher,
+            classes_attended_count=3
+        )
+
         import secrets
         for i in range(3):
             AttendanceSession.objects.create(
                 teacher=self.teacher, course=self.course,
                 section='A', year=1,
                 qr_code_token=secrets.token_urlsafe(16) + str(i),
+                status='stopped'
+            )
+        for i in range(2):
+            AttendanceSession.objects.create(
+                teacher=self.other_teacher, course=self.course,
+                section='A', year=1,
+                qr_code_token=secrets.token_urlsafe(16) + 'other' + str(i),
                 status='stopped'
             )
 
@@ -1920,6 +2126,52 @@ class StudentAttendanceSummaryTestCase(APITestCase):
         self.assertEqual(course_info['course_code'], 'CS101')
         self.assertEqual(course_info['attended'], 2)
         self.assertEqual(course_info['total_sessions'], 3)
+
+    def test_summary_by_program_and_year_returns_matching_students(self):
+        response = self.client.get(f'{self.url}?program=CS&year=1')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 2)
+        self.assertEqual(response.data['filters']['program'], 'CS')
+        self.assertEqual(response.data['filters']['year'], '1')
+
+        rolls = [student['student_rollNo'] for student in response.data['students']]
+        self.assertIn('ROLL001', rolls)
+        self.assertIn('ROLL002', rolls)
+        self.assertNotIn('ROLL003', rolls)
+
+    def test_summary_by_combined_filters_returns_scoped_matches(self):
+        response = self.client.get(f'{self.url}?student_rollNo=ROLL002&program=CS&year=1')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['students'][0]['student_rollNo'], 'ROLL002')
+        self.assertEqual(response.data['students'][0]['courses'][0]['total_sessions'], 3)
+
+    def test_summary_uses_slot_count_for_total_sessions(self):
+        slot_course = Course.objects.create(course_code='CS406', course_name='Software Design')
+        StudentCourse.objects.create(
+            student=self.student,
+            course=slot_course,
+            teacher=self.teacher,
+            classes_attended_count=2,
+        )
+
+        import secrets
+        AttendanceSession.objects.create(
+            teacher=self.teacher,
+            course=slot_course,
+            section='A',
+            year=1,
+            slot_count=2,
+            qr_code_token=secrets.token_urlsafe(16) + 'slot',
+            status='stopped',
+        )
+
+        response = self.client.get(f'{self.url}?student_rollNo=ROLL001')
+        self.assertEqual(response.status_code, 200)
+        slot_entry = next(c for c in response.data['courses'] if c['course_code'] == 'CS406')
+        self.assertEqual(slot_entry['attended'], 2)
+        self.assertEqual(slot_entry['total_sessions'], 2)
+        self.assertAlmostEqual(slot_entry['percent'], 100.0)
 
     def test_missing_roll_no_returns_400(self):
         response = self.client.get(self.url)
@@ -1942,14 +2194,37 @@ class CourseAttendanceSummaryTestCase(APITestCase):
         self.url = reverse('attendance-course-summary')
         self.user = User.objects.create_user(username='mgmt_cat', password='Pass123!')
         self.client.force_authenticate(user=self.user)
+        self.management = Management.objects.create(
+            user=self.user,
+            Management_name='Course Attendance Management',
+            email='mgmt_cat@test.com'
+        )
 
-        self.teacher = Teacher.objects.create(teacher_name='Prof. B', teacher_rollNo='T_CAT', email='cat_t@t.com')
+        self.teacher = Teacher.objects.create(
+            teacher_name='Prof. B',
+            teacher_rollNo='T_CAT',
+            email='cat_t@t.com',
+            management=self.management,
+        )
         self.course = Course.objects.create(course_code='IT201', course_name='Networks')
-        self.s1 = Student.objects.create(student_name='Stu One', student_rollNo='S_ONE', year=2, dept='IT', section='A', email='s1@t.com')
-        self.s2 = Student.objects.create(student_name='Stu Two', student_rollNo='S_TWO', year=2, dept='IT', section='A', email='s2@t.com')
+        self.s1 = Student.objects.create(
+            student_name='Stu One', student_rollNo='S_ONE', year=2, dept='IT', section='A', email='s1@t.com',
+            management=self.management,
+        )
+        self.s2 = Student.objects.create(
+            student_name='Stu Two', student_rollNo='S_TWO', year=2, dept='IT', section='A', email='s2@t.com',
+            management=self.management,
+        )
+        TaughtCourse.objects.create(
+            teacher=self.teacher,
+            course=self.course,
+            section='A',
+            year=2,
+            classes_taken_count=0,
+        )
 
-        StudentCourse.objects.create(student=self.s1, course=self.course, teacher=self.teacher, classes_attended='2024-01-01')
-        StudentCourse.objects.create(student=self.s2, course=self.course, teacher=self.teacher, classes_attended='')
+        StudentCourse.objects.create(student=self.s1, course=self.course, teacher=self.teacher, classes_attended_count=1)
+        StudentCourse.objects.create(student=self.s2, course=self.course, teacher=self.teacher, classes_attended_count=0)
 
         import secrets
         for i in range(2):
@@ -1981,3 +2256,20 @@ class CourseAttendanceSummaryTestCase(APITestCase):
     def test_nonexistent_course_returns_404(self):
         response = self.client.get(f'{self.url}?course_code=XXXX')
         self.assertEqual(response.status_code, 404)
+
+    def test_course_summary_uses_slot_count_for_total_sessions(self):
+        import secrets
+        AttendanceSession.objects.create(
+            teacher=self.teacher,
+            course=self.course,
+            section='A',
+            year=2,
+            slot_count=3,
+            qr_code_token=secrets.token_urlsafe(16) + 'slots',
+            status='stopped'
+        )
+
+        response = self.client.get(f'{self.url}?course_code=IT201')
+        self.assertEqual(response.status_code, 200)
+        stu_one = next(s for s in response.data['students'] if s['roll'] == 'S_ONE')
+        self.assertEqual(stu_one['total_sessions'], 5)

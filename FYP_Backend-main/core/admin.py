@@ -42,7 +42,7 @@ class TaughtCourseAdminForm(forms.ModelForm):
 @admin.register(TaughtCourse)
 class TaughtCourseAdmin(admin.ModelAdmin):
     form = TaughtCourseAdminForm
-    list_display = ('id', 'teacher', 'course', 'classes_taken')
+    list_display = ('id', 'teacher', 'course', 'classes_taken_count')
     list_filter = ('teacher', 'course')
     search_fields = ('teacher__teacher_name', 'course__course_name')
 
@@ -60,7 +60,7 @@ class StudentCourseAdminForm(forms.ModelForm):
 @admin.register(StudentCourse)
 class StudentCourseAdmin(admin.ModelAdmin):
     form = StudentCourseAdminForm
-    list_display = ('id', 'student', 'course', 'teacher', 'classes_attended')
+    list_display = ('id', 'student', 'course', 'teacher', 'classes_attended_count')
     list_filter = ('course', 'teacher')
     search_fields = ('student__student_name', 'course__course_name', 'teacher__teacher_name')
 

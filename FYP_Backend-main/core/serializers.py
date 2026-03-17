@@ -17,7 +17,7 @@ class StudentCourseInlineSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StudentCourse
-        fields = ['id', 'course_id', 'course_code', 'course_name', 'classes_attended']
+        fields = ['id', 'course_id', 'course_code', 'course_name', 'classes_attended_count']
 
 
 class StudentSerializer(serializers.ModelSerializer):
@@ -82,7 +82,7 @@ class TaughtCourseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TaughtCourse
-        fields = ['id', 'course', 'teacher', 'course_name', 'teacher_name', 'classes_taken', 'section', 'year']
+        fields = ['id', 'course', 'teacher', 'course_name', 'teacher_name', 'classes_taken_count', 'section', 'year']
         read_only_fields = ['id']
 
 
@@ -94,7 +94,7 @@ class StudentCourseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StudentCourse
-        fields = ['id', 'student', 'course', 'teacher', 'student_name', 'course_name', 'teacher_name', 'classes_attended']
+        fields = ['id', 'student', 'course', 'teacher', 'student_name', 'course_name', 'teacher_name', 'classes_attended_count']
         read_only_fields = ['id']
 
 
@@ -270,7 +270,7 @@ class AttendanceSessionSerializer(serializers.ModelSerializer):
     class Meta:
         model = AttendanceSession
         fields = [
-            'id', 'teacher', 'course', 'section', 'year', 'status',
+            'id', 'teacher', 'course', 'section', 'year', 'slot_count', 'status',
             'qr_code_token', 'started_at', 'stopped_at',
             'teacher_name', 'course_name'
         ]
@@ -323,7 +323,6 @@ class StudentCourseSummarySerializer(serializers.Serializer):
     course_code = serializers.CharField()
     course_name = serializers.CharField()
     teacher_name = serializers.CharField()
-    classes_attended_list = serializers.ListField(child=serializers.CharField())
     attended = serializers.IntegerField()
     total_sessions = serializers.IntegerField()
     percent = serializers.FloatField()
@@ -340,6 +339,13 @@ class StudentAttendanceSummarySerializer(serializers.Serializer):
     email = serializers.CharField()
     overall_attendance = serializers.FloatField()
     courses = StudentCourseSummarySerializer(many=True)
+
+
+class StudentAttendanceSummaryListSerializer(serializers.Serializer):
+    """Attendance summary response for multiple filtered students."""
+    count = serializers.IntegerField()
+    filters = serializers.DictField(required=False)
+    students = StudentAttendanceSummarySerializer(many=True)
 
 
 class CourseStudentAttendanceSerializer(serializers.Serializer):
