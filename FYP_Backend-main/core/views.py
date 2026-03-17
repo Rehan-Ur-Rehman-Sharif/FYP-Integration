@@ -721,8 +721,10 @@ class StudentViewSet(viewsets.ModelViewSet):
         if not self.request.user.is_superuser:
             management = _get_management_for_user(self.request.user)
             if not management:
+                student = _get_student_for_user(self.request.user)
+                if student:
+                    return queryset.filter(student_id=student.student_id)
                 return queryset.none()
-            queryset = queryset.filter(management=management)
 
         # Optional filters – accept both 'dept' and 'program' (frontend uses 'program')
         year = self.request.query_params.get('year')
