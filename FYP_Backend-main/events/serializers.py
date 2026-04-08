@@ -6,41 +6,110 @@ from .models import Event, Registration, Attendance, EventParticipant
 
 
 class EventSerializer(serializers.ModelSerializer):
+    """
+    Event serializer with frontend-compatible field names matching EventData.js / EventCard /
+    EventModal / CreateEventModal in the React frontend.
+    """
     organiser = serializers.ReadOnlyField(source='organiser.username')
-    participants_count = serializers.SerializerMethodField(read_only=True)
-    attendance_count = serializers.SerializerMethodField(read_only=True)
 
-    # Participant-specific fields (evaluated based on authenticated user)
-    is_registered = serializers.SerializerMethodField(read_only=True)
-    attended = serializers.SerializerMethodField(read_only=True)
+    # ── Frontend-compatible field aliases ───────────────────────────────────────
+    # 'date'  ← event_date (DateField → "YYYY-MM-DD")
+    date = serializers.DateField(source='event_date', required=False, allow_null=True)
+
+    # 'regStart' / 'regEnd' ← registration_start / registration_end
+    # DateTimeField with format='%Y-%m-%d' outputs a plain date string matching EventData.js
+    regStart = serializers.DateTimeField(
+        source='registration_start', required=False, allow_null=True, format='%Y-%m-%d',
+    )
+    regEnd = serializers.DateTimeField(
+        source='registration_end', required=False, allow_null=True, format='%Y-%m-%d',
+    )
+
+    # 'registrationLink' ← registration_link
+    registrationLink = serializers.URLField(
+        source='registration_link', required=False, allow_blank=True, default='',
+    )
+
+    # 'qrImage' ← attendance_qr_code_url
+    qrImage = serializers.URLField(
+        source='attendance_qr_code_url', required=False, allow_blank=True, default='',
+    )
+
+    # ── Computed / nested fields ─────────────────────────────────────────────────
+    registeredCount = serializers.SerializerMethodField()
+    participants = serializers.SerializerMethodField()
+    attendance = serializers.SerializerMethodField()
 
     class Meta:
         model = Event
-        fields = '__all__'
+        fields = [
+            'id',
+            'title',
+            'description',
+            'venue',
+            'geo',
+            'organiser',
+            'date',
+            'regStart',
+            'regEnd',
+            'registrationLink',
+            'qrImage',
+            'registeredCount',
+            'participants',
+            'attendance',
+            'capacity',
+            'created_at',
+        ]
 
-    def get_participants_count(self, obj):
+    # ── SerializerMethodField implementations ────────────────────────────────────
+
+    def get_registeredCount(self, obj):
         return obj.registrations.count()
 
-    def get_attendance_count(self, obj):
-        return obj.registrations.filter(attended=True).count()
+    def get_participants(self, obj):
+        result = []
+        for reg in obj.registrations.select_related('user').all():
+            user = reg.user
+            phone = ''
+            age = None
+            display_name = user.get_full_name() or user.username
+            try:
+                ep = user.event_participant
+                display_name = ep.display_name or display_name
+                phone = ep.phone or ''
+                age = ep.age
+            except EventParticipant.DoesNotExist:
+                pass
+            result.append({
+                'id': str(user.id),
+                'name': display_name,
+                'email': user.email,
+                'phone': phone,
+                'age': age,
+            })
+        return result
 
-    def get_is_registered(self, obj):
-        request = self.context.get('request')
-        if not request or not request.user or not request.user.is_authenticated:
-            return False
-        return obj.registrations.filter(user=request.user).exists()
-
-    def get_attended(self, obj):
-        request = self.context.get('request')
-        if not request or not request.user or not request.user.is_authenticated:
-            return False
-        return obj.registrations.filter(user=request.user, attended=True).exists()
+    def get_attendance(self, obj):
+        result = []
+        for reg in obj.registrations.select_related('user').prefetch_related('attendance').all():
+            try:
+                att = reg.attendance
+                result.append({
+                    'id': str(reg.user.id),
+                    'status': 'present' if att.present else 'absent',
+                    'time': att.timestamp.strftime('%I:%M %p') if att.timestamp else '',
+                })
+            except Attendance.DoesNotExist:
+                pass
+        return result
 
 
 class EventParticipantRegistrationSerializer(serializers.Serializer):
     username = serializers.CharField(required=True)
     password = serializers.CharField(write_only=True, required=True)
-    display_name = serializers.CharField(required=False, allow_blank=True)
+    display_name = serializers.CharField(required=False, allow_blank=True, default='')
+    phone = serializers.CharField(required=False, allow_blank=True, default='')
+    age = serializers.IntegerField(required=False, allow_null=True, default=None)
 
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
@@ -62,6 +131,8 @@ class EventParticipantRegistrationSerializer(serializers.Serializer):
         return EventParticipant.objects.create(
             user=user,
             display_name=validated_data.get('display_name', ''),
+            phone=validated_data.get('phone', ''),
+            age=validated_data.get('age'),
         )
 
 
@@ -83,3 +154,4 @@ class AttendanceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Attendance
         fields = '__all__'
+
