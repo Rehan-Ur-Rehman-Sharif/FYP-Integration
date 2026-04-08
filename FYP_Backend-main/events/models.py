@@ -27,6 +27,9 @@ class Event(models.Model):
     event_qr_code_url = models.URLField(blank=True)
     registration_link = models.URLField(blank=True)
 
+    # Free-text geo location string (e.g. "28.6139° N, 77.2090° E") as sent by the frontend
+    geo = models.CharField(max_length=255, blank=True, default='')
+
     organiser = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='organised_events')
     capacity = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -62,6 +65,8 @@ class EventParticipant(models.Model):
         related_name='event_participant',
     )
     display_name = models.CharField(max_length=200, blank=True)
+    phone = models.CharField(max_length=30, blank=True, default='')
+    age = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

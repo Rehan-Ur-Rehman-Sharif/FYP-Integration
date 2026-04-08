@@ -54,6 +54,8 @@ class EventParticipantRegistrationView(APIView):
                 'message': 'Participant registered successfully',
                 'username': participant.user.username,
                 'display_name': participant.display_name,
+                'phone': participant.phone,
+                'age': participant.age,
             }, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -88,6 +90,9 @@ class EventParticipantLoginView(APIView):
                 'refresh': str(refresh),
                 'access': str(refresh.access_token),
                 'user_type': 'event_participant',
+                'id': user.id,
+                'name': participant.display_name or user.username,
+                'email': user.email,
                 'username': user.username,
                 'display_name': participant.display_name,
             }, status=status.HTTP_200_OK)
