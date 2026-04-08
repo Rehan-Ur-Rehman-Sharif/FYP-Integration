@@ -91,7 +91,7 @@ class EventSerializer(serializers.ModelSerializer):
 
     def get_attendance(self, obj):
         result = []
-        for reg in obj.registrations.select_related('user').prefetch_related('attendance').all():
+        for reg in obj.registrations.select_related('user', 'attendance').all():
             try:
                 att = reg.attendance
                 result.append({
