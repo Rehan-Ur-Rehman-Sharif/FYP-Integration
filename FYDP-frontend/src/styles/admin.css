@@ -44,7 +44,8 @@ body{
   width:56px;
   height:56px;
   border-radius:30px;
-  background: var(--maroon);
+  /* background: var(--maroon); */
+  background: #3f6fb6;
   display:flex;
   align-items:center;
   justify-content:center;
@@ -96,21 +97,35 @@ body{
   margin-top: 18px;
   box-shadow: 0 6px 18px rgba(0,0,0,0.03);
 }
-
-/* section title bar */
+.rfid-chip {
+  background: #e6f0ff;
+  color: #2c5f9e;
+  padding: 4px 8px;
+  margin: 2px;
+  border-radius: 6px;
+  font-size: 12px;
+  display: inline-block;
+}
+/*section title bar*/
 .section-title {
   display:flex;
-  align-items:center;
+  align-items: center;
   justify-content: space-between;
-  gap:10px;
+  gap: 12px;
   background: var(--maroon);
   color:#fff;
   padding:10px 14px;
   border-radius:8px;
   font-weight:700;
   margin-bottom:14px;
-  width:max-content;
+  /* width:max-content; */
   width: 100%;
+}
+
+.section-title-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 /* ---------- Mini utilities ---------- */
@@ -168,6 +183,7 @@ body{
   display:grid;
   grid-template-columns: repeat(2, 1fr);
   gap:12px;
+  margin-bottom: 10px;
 }
 .grid-2 input,
 .grid-2 select {
@@ -241,6 +257,23 @@ input, select, textarea {
 .sub-tabs{
    display: flex;
    gap: 13px;
+   align-items: center;
+}
+
+.sub-tabs > div{
+  flex: 1;
+}
+
+.sub-tabs button{
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  border-radius: 29px;
+  border: 2px solid transparent;
+  background: #fff;
+  color: #333;
+  font-weight: 600;
+  cursor: pointer;
 }
 /* .sub-tabs .ind{
  width:280px;
@@ -304,12 +337,7 @@ input, select, textarea {
   .admin-tabs { flex-wrap:wrap; justify-content:flex-start; gap:8px; }
   .modal-box { width:92%; margin:0 10px; }
 }
-.active{
-color: #650000;
-border: 2px solid #650000;
-padding: 10px;
-border-radius: 29px;
-}
+
 /*-----------filtered resukt---------------*/
 .simple-table {
   width: 100%;
@@ -321,11 +349,7 @@ border-radius: 29px;
   justify-content: space-between;
 
 }
-.simple-table .modify #up{
-  background-color: #650000;
-  border-radius: 10px;
-  width: 100px;
-}
+
 .simple-table .modify #del{
  border: 2px black solid;
   border-radius: 10px;
@@ -339,11 +363,49 @@ border-radius: 29px;
   padding: 10px;
 }
 
-.simple-table th {
+/* .simple-table th {
   background-color: #7a0000;
   color: white;
+} */
+
+.teacher-search-table th {
+  background-color: #3f6fb6;
+}
+
+.student-search-table th {
+  background-color: #3f6fb6;
 }
 
 .simple-table tr:nth-child(even) {
   background-color: #f9f9f9;
+}
+
+.heading-bold {
+  font-weight: 800;
+}
+/* Base */
+.status {
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  display: inline-block;
+}
+
+/* Pending */
+.status.pending {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+/* Paid */
+.status.paid {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+/* Overdue */
+.status.overdue {
+  background: #fee2e2;
+  color: #dc2626;
 }

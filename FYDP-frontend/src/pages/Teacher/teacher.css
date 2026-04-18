@@ -1,0 +1,551 @@
+/* MAIN WRAPPER LAYOUT */
+.teacher-page {
+  min-height: 100vh;
+  width: 100%;
+  padding: 40px;
+  box-sizing: border-box;
+}
+
+.teacher-wrapper {
+  display: grid;
+  grid-template-columns: 330px 1fr;
+  gap: 40px;
+  width: 92%;
+  margin: 0 auto;
+  font-family: Arial, sans-serif;
+}
+
+@media (max-width: 900px) {
+  .teacher-page {
+    padding: 20px;
+  }
+
+  .teacher-wrapper {
+    grid-template-columns: 1fr;
+    width: 100%;
+    gap: 20px;
+  }
+
+  .right-section {
+    gap: 20px;
+  }
+}
+
+.profile-card {
+  background: white;
+  border: 2px solid #cfc9c9;
+  border-radius: 18px;
+  padding: 30px 20px;
+  text-align: center;
+  height: fit-content;
+}
+
+.profile-avatar {
+  font-size: 90px;
+  color: #737373;
+  margin-bottom: 10px;
+}
+
+.profile-card h3 {
+  font-size: 20px;
+  margin-top: 5px;
+}
+
+.profile-card p {
+  margin: 4px 0;
+  font-size: 15px;
+}
+
+.teach-list {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #ddd;
+}
+
+
+/* --------------------------
+   RIGHT SECTION
+--------------------------- */
+.right-section {
+  display: flex;
+  flex-direction: column;
+  gap: 35px;
+ 
+}
+
+
+/* --------------------------
+   WELCOME BANNER
+--------------------------- */
+.welcome-banner {
+  background-color: #2C5F9E;
+  color: white;
+  padding: 14px 25px;
+  border-radius: 12px;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+
+/* --------------------------
+   CARD CONTAINER
+--------------------------- */
+.card {
+  background: white;
+  border-radius: 18px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+  padding-bottom: 20px;
+  border: 1px solid #ddd;
+}
+
+/* Prevent global `.card:hover` transforms (from other dashboards) from affecting Teacher cards */
+.teacher-page .card {
+  cursor: default;
+  transition: box-shadow 0.3s ease;
+}
+
+.teacher-page .card:hover {
+  transform: none;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+}
+
+/* Ensure other pages' global .card styles (e.g. orgAdmin) don't break this layout */
+.teacher-wrapper .card {
+  display: block;
+}
+
+.teacher-wrapper .card-title {
+  width: 100%;
+  display: block;
+}
+
+.teacher-wrapper .card-content {
+  width: 100%;
+}
+
+.card-title {
+  background: #2C5F9E;
+  color: white;
+  padding: 14px 20px;
+  border-radius: 16px 16px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.card-content {
+  padding: 25px 30px;
+}
+
+/* --------------------------
+   FORM GRID (LIVE FORM)
+--------------------------- */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+}
+
+.form-field-full {
+  grid-column: 1 / -1;
+}
+
+
+/* --------------------------
+   FORM INPUTS
+--------------------------- */
+.card-content label {
+  display: block;
+  margin-top: 0;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.card-content select,
+.card-content input {
+  width: 100%;
+  padding: 10px;
+  margin-top: 6px;
+  box-shadow: none;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 15px;
+  background: white;
+  min-height: 40px;
+}
+
+.card-content select:focus,
+.card-content input:focus {
+  outline: none;
+  border-color: #2C5F9E;
+}
+
+@media (max-width: 900px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .card-content {
+    padding: 20px;
+  }
+}
+
+
+/* --------------------------
+   BUTTONS
+--------------------------- */
+.start-btn,
+.stop-btn,
+.new-btn {
+  width: 100%;
+  padding: 12px;
+  margin-top: 20px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  border: none;
+}
+
+.start-btn {
+  background: #2C5F9E;
+  color: white;
+}
+
+.start-btn:hover {
+  background: #2C5F9E;
+}
+
+.stop-btn {
+  background: #2C5F9E;
+  color: white;
+  width: 180px;
+  margin-left: auto;
+  margin-right: 20px;
+}
+
+.stop-btn:hover {
+  background: #2C5F9E;
+}
+
+.new-btn {
+  background: #2C5F9E;
+  color: white;
+  width: 200px;
+  margin: 25px auto 0;
+}
+
+.new-btn:hover {
+  background: #2C5F9E;
+}
+
+
+/* --------------------------
+   ACTIVE ATTENDANCE BOX
+--------------------------- */
+.active-card {
+  padding-bottom: 40px;
+}
+
+.active-box {
+  background: #dcf3ff;
+  padding: 20px;
+  margin: 20px;
+  border-radius: 10px;
+}
+
+
+/* --------------------------
+   SUCCESS BOX (COMPLETED)
+--------------------------- */
+.success-box {
+  background: #e4f8e4;
+  border: 2px solid #022658;
+  padding: 20px;
+  margin: 20px;
+  border-radius: 10px;
+}
+
+
+/* --------------------------
+   FINAL ATTENDANCE LIST
+--------------------------- */
+.final-list {
+  padding: 10px 25px;
+}
+
+.scroll-area {
+  max-height: 300px;
+  overflow-y: auto;
+  margin-top: 10px;
+  padding-right: 8px;
+}
+
+.student-row {
+  background: white;
+  padding: 12px 15px;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+
+/* TAG COLORS */
+.tag {
+  padding: 3px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  font-weight: bold;
+}
+
+.tag.RFID {
+  background: #d0e5ff;
+  color: #0052b8;
+}
+
+.tag.CV {
+  background: #d4ffe2;
+  color: #008f32;
+}
+
+.time {
+  font-size: 12px;
+  color: #666;
+}
+/* Modal Overlay */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+/* Modal Box */
+.modal-box {
+  background: white;
+  width: 450px;
+  max-width: calc(100% - 32px);
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 2px 15px rgba(0,0,0,0.2);
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+/* Header */
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 20px;
+  color: #2C5F9E;
+}
+
+.close-btn {
+  cursor: pointer;
+  font-size: 20px;
+}
+
+/* Content */
+.modal-content label {
+  font-weight: 600;
+  margin-top: 10px;
+  display: block;
+}
+
+.modal-content input,
+.modal-content select {
+  width: 100%;
+  padding: 8px;
+  margin-top: 5px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+}
+
+/* Footer Buttons */
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.cancel-btn {
+  padding: 8px 14px;
+  background: #ccc;
+  border-radius: 8px;
+  margin-right: 10px;
+  cursor: pointer;
+}
+
+.submit-btn {
+  padding: 8px 14px;
+  background: #2C5F9E;
+  color: white;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.update-btn {
+  padding: 8px 14px;
+  background: #2C5F9E;
+  color: white;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+/* Animation */
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+.welcome-banner{
+    display: flex;
+    justify-content: space-between;
+}
+.welcome-banner .btn{
+    background-color: white;
+    color:black;
+    border-radius: 10px;
+    width:95px;
+    height: 30px;
+}
+.top-actions{
+    display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.top-actions .btn{
+     background-color: white;
+    color:black;
+    border-radius: 10px;
+    width: 100px;
+    height: 40px;
+}
+.top-actions .update-btn{
+  margin-left: 0;
+}
+
+.teacher-card {
+  width: 350px;
+  max-width: 100%;
+  background: white;
+  border-radius: 20px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+  text-align: center;
+  position: relative;
+  padding-bottom: 30px;
+  height: 390px;
+}
+
+.card-header {
+  height: 120px;
+  background: #2C5F9E;
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
+}
+
+.profile-avatar {
+  width: 120px;
+  height: 120px;
+  background: #f0f2f5;
+  border-radius: 50%;
+  position: absolute;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 6px solid white;
+}
+
+.teacher-name {
+  color:rgb(8, 8, 49);
+  margin-top: 80px;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.teacher-details {
+  list-style: none;
+  padding: 0;
+  margin-top: 20px;
+  text-align: left;
+  width: 80%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.teacher-details li {
+  margin-bottom: 10px;
+}
+
+@media (max-width: 600px) {
+  .teacher-page {
+    padding: 12px;
+    overflow-x: hidden;
+    overflow-x: hidden;
+  }
+
+  .welcome-banner{
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    font-size: 16px;
+  }
+
+  .top-actions{
+    justify-content: stretch;
+  }
+
+  .top-actions .update-btn{
+    width: 100%;
+  }
+
+  .teacher-card{
+    width: 100%;
+    margin: 0 auto;
+    height: auto;
+  }
+
+  .teacher-name{
+    font-size: 20px;
+  }
+
+  .teacher-details{
+    width: 90%;
+  }
+
+  .card-title{
+    padding: 12px 14px;
+    font-size: 16px;
+  }
+
+  .card-content{
+    padding: 16px;
+  }
+
+  .stop-btn{
+    width: 100%;
+    margin: 20px 0 0;
+  }
+}
+

@@ -1,0 +1,435 @@
+/* ============ GLOBAL ============ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: #eef3fa;
+  margin: 0;
+  font-family: Arial, sans-serif;
+}
+
+/* ============ LAYOUT ============ */
+.participant-page {
+  display: flex;
+  min-height: 100vh;
+  background-color: #eef3fa;
+  padding: 24px;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+/* ============ PROFILE SIDEBAR ============ */
+.participant-profile-card {
+  width: 240px;
+  min-width: 220px;
+  background: #ffffff;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-bottom: 28px;
+  flex-shrink: 0;
+}
+
+.participant-profile-banner {
+  width: 100%;
+  height: 80px;
+  background: linear-gradient(135deg, #2c5f9e, #3b7dd8);
+}
+
+.participant-avatar-wrapper {
+  margin-top: -38px;
+  z-index: 1;
+  background: #e8edf5;
+  border-radius: 50%;
+  width: 76px;
+  height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 3px solid #ffffff;
+}
+
+.participant-profile-info {
+  text-align: center;
+  padding: 12px 16px 0;
+}
+
+.participant-profile-name {
+  font-size: 17px;
+  font-weight: 700;
+  color: #1e2a38;
+  margin: 0 0 10px;
+}
+
+.participant-profile-detail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #5a6f8e;
+  margin-bottom: 6px;
+  justify-content: center;
+}
+
+/* ============ MAIN CONTENT ============ */
+.participant-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+
+/* ============ HEADER ============ */
+.participant-header {
+  background: linear-gradient(90deg, #2c5f9e, #3b7dd8);
+  color: #ffffff;
+  border-radius: 12px;
+  padding: 18px 28px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  box-shadow: 0 2px 8px rgba(44, 95, 158, 0.25);
+}
+
+/* ============ SECTION LABELS ============ */
+.participant-section-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e2a38;
+  margin-bottom: 12px;
+}
+
+/* ============ EMPTY STATE ============ */
+.participant-empty {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 40px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
+  color: #5a6f8e;
+  font-size: 14px;
+}
+
+/* ============ EVENT CARDS GRID ============ */
+.participant-events-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 18px;
+}
+
+/* ============ EVENT CARD ============ */
+.participant-event-card {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+}
+
+.participant-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.participant-card-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e2a38;
+  margin: 0;
+}
+
+.participant-card-status-icon {
+  flex-shrink: 0;
+  margin-left: 8px;
+  margin-top: 2px;
+}
+
+.participant-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #5a6f8e;
+}
+
+.participant-card-desc {
+  font-size: 13px;
+  color: #6b7c93;
+  line-height: 1.5;
+  margin: 4px 0 6px;
+}
+
+.participant-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.participant-view-btn {
+  background-color: #2c5f9e;
+  color: #ffffff;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 0.2s;
+}
+
+.participant-view-btn:hover {
+  background-color: #245090;
+}
+
+.participant-status-attended {
+  font-size: 13px;
+  font-weight: 600;
+  color: #22a06b;
+}
+
+.participant-status-not-attended {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ae2a19;
+}
+
+/* ============ RESPONSIVE ============ */
+@media (max-width: 700px) {
+  .participant-page {
+    flex-direction: column;
+    padding: 14px;
+  }
+
+  .participant-profile-card {
+    width: 100%;
+  }
+
+  .participant-events-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============ SCAN QR BUTTON ============ */
+.pqr-scan-btn {
+  background-color: #e8f0fb;
+  color: #2c5f9e;
+  border: 1.5px solid #a8c0e8;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 0.2s, border-color 0.2s;
+}
+
+.pqr-scan-btn:hover {
+  background-color: #d2e3f7;
+  border-color: #2c5f9e;
+}
+
+/* ============ OVERLAY (shared) ============ */
+.pqr-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+}
+
+/* ============ QR SCANNER BOX ============ */
+.pqr-scanner-box {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 24px 28px 28px;
+  width: 360px;
+  max-width: 94vw;
+  box-shadow: 0 6px 32px rgba(0, 0, 0, 0.2);
+}
+
+.pqr-scanner-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e2a38;
+  margin-bottom: 8px;
+}
+
+.pqr-scanner-subtitle {
+  font-size: 13px;
+  color: #6b7c93;
+  margin: 0 0 16px;
+  line-height: 1.5;
+}
+
+.pqr-reader {
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 2px solid #d0dff0;
+}
+
+/* ============ PHOTO UPLOAD MODAL ============ */
+.pqr-upload-modal {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 26px 28px 28px;
+  width: 420px;
+  max-width: 94vw;
+  box-shadow: 0 6px 32px rgba(0, 0, 0, 0.2);
+}
+
+.pqr-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e2a38;
+  margin-bottom: 6px;
+}
+
+.pqr-modal-subtitle {
+  font-size: 13px;
+  color: #5a6f8e;
+  margin: 0 0 4px;
+}
+
+.pqr-modal-hint {
+  font-size: 13px;
+  color: #8a9ab5;
+  margin: 0 0 16px;
+}
+
+.pqr-close-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #8a9ab5;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.pqr-close-btn:hover {
+  color: #1e2a38;
+  background: #f0f4fa;
+}
+
+.pqr-drop-zone {
+  border: 2px dashed #c0d4ee;
+  border-radius: 12px;
+  padding: 32px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  color: #8a9ab5;
+  font-size: 14px;
+  transition: border-color 0.2s, background 0.2s;
+  min-height: 160px;
+}
+
+.pqr-drop-zone:hover {
+  border-color: #2c5f9e;
+  background: #f5f9ff;
+}
+
+.pqr-drop-zone--has-file {
+  padding: 8px;
+  border-style: solid;
+  border-color: #2c5f9e;
+}
+
+.pqr-drop-hint {
+  font-size: 11px;
+  color: #b0bfcc;
+}
+
+.pqr-preview-img {
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.pqr-reselect-btn {
+  background: none;
+  border: none;
+  color: #2c5f9e;
+  font-size: 13px;
+  cursor: pointer;
+  margin-top: 8px;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.pqr-modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.pqr-cancel-btn {
+  background: #f0f4fa;
+  color: #5a6f8e;
+  border: none;
+  padding: 9px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.pqr-cancel-btn:hover {
+  background: #e0e8f4;
+}
+
+.pqr-submit-btn {
+  background-color: #2c5f9e;
+  color: #ffffff;
+  border: none;
+  padding: 9px 22px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color 0.2s;
+}
+
+.pqr-submit-btn:hover {
+  background-color: #245090;
+}

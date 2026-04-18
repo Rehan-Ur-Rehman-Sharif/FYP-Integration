@@ -1,0 +1,211 @@
+/* Organizational Admin Dashboard theme + background */
+
+body.orgadmin-page {
+  background-image: url("../../assets/background.jpeg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+/* Button theme (scoped to this page only) */
+body.orgadmin-page .admin-page .tab,
+body.orgadmin-page .admin-page .review-btn,
+body.orgadmin-page .admin-page .add-btn,
+body.orgadmin-page .admin-page .primary,
+body.orgadmin-page .admin-page .primary-outline,
+body.orgadmin-page .admin-page .logout-btn {
+  background: #3f6fb6;
+  color: #fff;
+  border-color: #3f6fb6;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+body.orgadmin-page .admin-page .tab:hover,
+body.orgadmin-page .admin-page .review-btn:hover,
+body.orgadmin-page .admin-page .add-btn:hover,
+body.orgadmin-page .admin-page .primary:hover,
+body.orgadmin-page .admin-page .primary-outline:hover,
+body.orgadmin-page .admin-page .logout-btn:hover {
+  background: #2f5fa7;
+  border-color: #2f5fa7;
+  color: #fff;
+}
+
+/* Active tab */
+body.orgadmin-page .admin-page .tab.active {
+  background: #2f5fa7;
+  border-color: #2f5fa7;
+  box-shadow: 0 6px 18px rgba(47, 95, 167, 0.18);
+}
+
+/* View Attendance: sub-tabs (Individual / Course-wise) */
+body.orgadmin-page .admin-page .sub-tabs button {
+  background: #3f6fb6;
+  color: #fff;
+  border-color: #3f6fb6;
+}
+
+body.orgadmin-page .admin-page .sub-tabs button:hover,
+body.orgadmin-page .admin-page .sub-tabs button.active {
+  background: #2f5fa7;
+  border-color: #2f5fa7;
+  color: #fff;
+}
+
+/* Contain wide tables (View Attendance) without changing desktop UI */
+body.orgadmin-page .admin-page .table-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* =============================
+   MOBILE RESPONSIVE (scoped)
+   Do not affect desktop UI
+============================= */
+
+@media (max-width: 768px) {
+  body.orgadmin-page {
+    background-attachment: scroll;
+  }
+
+  body.orgadmin-page .admin-page {
+    width: 100%;
+    max-width: none;
+    margin: 12px auto 40px;
+    padding: 0 12px;
+  }
+
+  body.orgadmin-page .admin-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  body.orgadmin-page .admin-tabs {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+  }
+
+  body.orgadmin-page .admin-page .tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  body.orgadmin-page .content-box {
+    padding: 12px;
+    overflow-x: auto;
+  }
+
+  /* Keep tables contained within the dashed placeholder box */
+  body.orgadmin-page .placeholder {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  body.orgadmin-page .simple-table {
+    width: 100%;
+  }
+
+  body.orgadmin-page .simple-table .modify {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  /* Teacher search table uses the same `.simple-table` pattern */
+  body.orgadmin-page .simple-table.teacher-search-table {
+    width: 100%;
+  }
+
+  body.orgadmin-page .section-title {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  body.orgadmin-page .request-card {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  body.orgadmin-page .request-left {
+    width: 100%;
+  }
+
+  body.orgadmin-page .request-left div {
+    min-width: 0;
+    flex: 1 1 180px;
+  }
+
+  body.orgadmin-page .sub-tabs {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  body.orgadmin-page .sub-tabs > div {
+    flex: 1 1 240px;
+  }
+
+  body.orgadmin-page .data-table {
+    min-width: 720px;
+  }
+
+  body.orgadmin-page .data-table th,
+  body.orgadmin-page .data-table td {
+    white-space: nowrap;
+    padding: 10px 8px;
+  }
+}
+
+@media (max-width: 520px) {
+  body.orgadmin-page .admin-page {
+    padding: 0 10px;
+  }
+
+  body.orgadmin-page .content-box {
+    padding: 10px;
+  }
+
+  body.orgadmin-page .filters,
+  body.orgadmin-page .filters-inline {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  body.orgadmin-page .filters > *,
+  body.orgadmin-page .filters-inline > * {
+    width: 100%;
+  }
+
+  body.orgadmin-page .admin-page .primary,
+  body.orgadmin-page .admin-page .primary-outline,
+  body.orgadmin-page .admin-page .add-btn,
+  body.orgadmin-page .admin-page .review-btn,
+  body.orgadmin-page .admin-page .logout-btn {
+    width: 100%;
+  }
+
+  body.orgadmin-page .request-left {
+    flex-direction: column;
+  }
+
+  body.orgadmin-page .request-left div {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+
+  body.orgadmin-page .modal-box {
+    width: calc(100% - 24px);
+  }
+
+  body.orgadmin-page .data-table {
+    font-size: 12px;
+  }
+}

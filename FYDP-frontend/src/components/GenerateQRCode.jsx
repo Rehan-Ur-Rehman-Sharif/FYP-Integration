@@ -1,56 +1,24 @@
-import React, { useState, useEffect } from "react";
-import QRCode from "react-qr-code";
+import React from "react";
 
-const QRGenerator = ({ course, batch, program, type, slots, geo }) => {
-  const [qrData, setQrData] = useState(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (!course || !batch || !program || !type || !slots) {
-      setError("All fields are required to generate QR");
-      return;
-    }
-
-    if (!geo.lat || !geo.lng) {
-      setError("Waiting for geolocation...");
-      return;
-    }
-
-    const qrPayload = {
-      course,
-      batch,
-      program,
-      type,
-      slots,
-      date: new Date().toISOString(),
-      geoLocation: {
-        lat: geo.lat,
-        lng: geo.lng,
-        radius: 50, // meters
-      },
-    };
-
-    setQrData(qrPayload);
-    setError("");
-  }, [course, batch, program, type, slots, geo]);
+const QRGenerator = ({ qrCode, qrToken, session, loading, error }) => {
+  if (loading) {
+    return <p style={{ textAlign: "center" }}>Generating QR...</p>;
+  }
 
   if (error) {
     return <p style={{ color: "red", textAlign: "center" }}>{error}</p>;
   }
 
-  if (!qrData) {
-    return <p style={{ textAlign: "center" }}>Generating QR...</p>;
+  if (!qrCode) {
+    return <p style={{ textAlign: "center" }}>No QR generated yet.</p>;
   }
 
   return (
     <div style={{ textAlign: "center", marginTop: 20 }}>
-      <QRCode
-        value={JSON.stringify(qrData)}
-        size={300}
-        level="H"
-        bgColor="#ffffff"
-        fgColor="#000000"
-        style={{ margin: "auto" }}
+      <img
+        src={qrCode}
+        alt="Attendance session QR"
+        style={{ width: 300, height: 300, margin: "auto", display: "block" }}
       />
       <pre
         style={{
@@ -63,7 +31,17 @@ const QRGenerator = ({ course, batch, program, type, slots, geo }) => {
           fontSize: 12,
         }}
       >
-        {JSON.stringify(qrData, null, 2)}
+        {JSON.stringify(
+          {
+            session_id: session?.id,
+            status: session?.status,
+            teacher: session?.teacher_name,
+            course: session?.course_name,
+            qr_token: qrToken,
+          },
+          null,
+          2
+        )}
       </pre>
     </div>
   );

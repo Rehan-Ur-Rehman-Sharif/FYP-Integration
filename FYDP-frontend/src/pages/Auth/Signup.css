@@ -1,0 +1,166 @@
+
+/* PAGE BACKGROUND */
+.signup-page {
+  position: relative;
+  min-height: 100vh;
+  background-image: url("../../assets/background.jpeg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+
+
+/* CENTER CONTAINER */
+.signup-container {
+  position: relative;
+  display: flex;
+  z-index: 1;
+  width: 100%;
+  max-width: 1100px;
+  box-shadow: 0 25px 60px #1f2c3a;
+  border-radius: 20px;
+   overflow: hidden;
+   margin-top: -70px;
+    width: 1000px;
+     background: #f4f7fb;
+}
+
+/* CARD */
+.signup-card {
+  display: flex;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 20px;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  min-height: 500px;
+}
+
+
+
+/* LEFT SIDE */
+.signup-sidebar {
+  width: 280px;
+  background: #e8edf5;
+  padding: 30px 20px;
+}
+
+.signup-sidebar h3 {
+  margin-top: 80px;
+  margin-bottom: 0px;
+  font-size: x-large;
+  font-weight: bold;
+  text-align: center;
+  color: #1f2c3a;
+
+
+}
+.role {
+  display: flex;              /* IMPORTANT */
+  align-items: center;        /* vertical center */
+  gap: 12px;                  /* space between icon & text */
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: #f3f4f6;
+  font-weight: 600;
+  font-size: 16px;
+  cursor: pointer;
+  transition: 0.3s ease;
+  width: 100%;
+  margin-bottom: 10px;
+  border: none;
+  margin-top: 20px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: 0.3s;
+}
+
+.role-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.role.active {
+  background: #2c5f9e;
+  color: white;
+}
+
+.role:hover {
+  background: #2c5f9e;
+  color: white;
+}
+
+/* RIGHT SIDE */
+.signup-form-area {
+  display: flex;
+  flex: 1;
+  padding: 40px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.form-section {
+  width: 50%;
+}
+
+.form-section h2 {
+  margin-bottom: 5px;
+  color: #1f2c3a;
+  font-weight: bold;
+}
+
+.login-link {
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+.login-link span {
+  color: #2c5f9e;
+  cursor: pointer;
+}
+
+.form-section input {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 15px;
+  border-radius: 8px;
+  border: 1px solid #ddd;
+}
+
+.submit-btn {
+  width: 140px;
+  padding: 10px;
+  border: none;
+  border-radius: 20px;
+  background: #2c5f9e;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.3s;
+}
+
+.submit-btn:disabled {
+  background: #7a9fc4;
+  cursor: not-allowed;
+}
+
+.submit-btn:hover:not(:disabled) {
+  background: #1f4c85;
+}
+
+.error-msg {
+  color: #d9534f;
+  font-size: 0.85rem;
+  margin: 4px 0;
+}
+
+/* IMAGE */
+.signup-image img {
+  width: 300px;
+}

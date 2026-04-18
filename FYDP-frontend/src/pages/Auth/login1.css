@@ -1,0 +1,194 @@
+/* ===============================
+   PAGE BACKGROUND
+=================================*/
+.login-page {
+  min-height: 100vh;
+  padding: 48px 20px 24px; /* space for navbar */
+
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+
+  background-image: url("../../assets/background.jpeg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+/* ===============================
+   MAIN CARD
+=================================*/
+.login-card {
+  width: 100%;
+  max-width: 1040px;
+  max-height: calc(100vh - 160px);
+  margin-top: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: stretch;
+
+  border-radius: 24px;
+  overflow: hidden;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+
+  box-shadow:
+    0 30px 80px #1f2c3a,
+    0 10px 35px #1f2c3a;
+}
+
+/* ===============================
+   LEFT SIDE
+=================================*/
+.login-card-left {
+  padding: 56px 48px;
+  display: flex;
+  justify-content: center;
+  overflow-y: auto;
+}
+
+.login-left-inner {
+  width: 100%;
+  max-width: 420px;
+}
+
+.login-heading {
+  font-size: 48px;
+  font-weight: 600;
+  color: #1f2c3a;
+  margin-top: -10px;
+  margin-bottom: 22px;
+}
+
+/* ===============================
+   FORM
+=================================*/
+.login-form {
+  display: flex;
+  flex-direction: column;
+  margin-top: 0;
+}
+
+.login-label {
+  font-size: 14px;
+  margin-bottom: 6px;
+  color: #2C5F9E;
+  font-weight: 500;
+}
+
+.login-input {
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid #d6dbe6;
+  margin-bottom: 14px;
+  font-size: 15px;
+  background: #ffffff;
+  outline: none;
+  transition: 0.3s ease;
+}
+
+.login-input:focus {
+  border-color: #2C5F9E;
+  box-shadow: 0 0 0 4px rgba(44, 95, 158, 0.15);
+}
+
+/* ===============================
+   BUTTON
+=================================*/
+.login-button {
+  width: 100%;
+  background: #2C5F9E;
+  color: white;
+  padding: 12px;
+  border-radius: 12px;
+  border: none;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.3s ease;
+  margin-top: 4px;
+}
+
+.login-button:hover {
+  background: #244d80;
+  transform: translateY(-2px);
+}
+
+/* ===============================
+   FORGOT PASSWORD
+=================================*/
+.login-forgot-wrap {
+  margin-top: 10px;
+  text-align: center;
+}
+
+.login-forgot {
+  font-size: 14px;
+  color: #2C5F9E;
+  text-decoration: none;
+  transition: 0.2s ease;
+}
+
+.login-forgot:hover {
+  text-decoration: underline;
+}
+
+/* ===============================
+   RIGHT SIDE (IMAGE)
+=================================*/
+.login-card-right {
+  background: rgba(44, 95, 158, 0.05);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 24px 0;
+  border-radius: 0 16px 16px 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.login-image {
+  width: 90%;
+  height: auto;
+  max-width: 90%;
+  margin: 0 auto;
+  object-fit: contain;
+  object-position: center;
+  display: block;
+  transform: scaleX(1.2);
+}
+
+/* ===============================
+   RESPONSIVE
+=================================*/
+@media (max-width: 1024px) {
+  .login-card-left {
+    padding: 50px;
+  }
+
+  .login-heading {
+    font-size: 40px;
+  }
+}
+
+@media (max-width: 900px) {
+  .login-card {
+    grid-template-columns: 1fr;
+  }
+
+  .login-card-left {
+    padding: 40px 30px;
+  }
+
+  .login-card-right {
+    padding: 30px;
+  }
+
+  .login-image {
+    max-width: 320px;
+  }
+}
