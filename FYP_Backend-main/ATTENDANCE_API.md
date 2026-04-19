@@ -21,6 +21,11 @@ Represents an attendance session started by a teacher for a specific course, sec
 - `year`: Academic year (e.g., 1, 2, 3, 4)
 - `status`: Session status (`active` or `stopped`)
 - `qr_code_token`: Unique token for QR code validation
+- `attendance_type`: Attendance type (`regular` or `compensatory`)
+- `program`: Optional program tag used by the frontend
+- `latitude`: Optional session latitude for geo-fencing
+- `longitude`: Optional session longitude for geo-fencing
+- `radius_meters`: Allowed QR scan radius (meters) when latitude/longitude are set
 - `started_at`: Timestamp when session started
 - `stopped_at`: Timestamp when session stopped (null if still active)
 
@@ -51,7 +56,13 @@ Tracks individual student attendance within a session.
   "teacher": 1,
   "course": 1,
   "section": "A",
-  "year": 1
+  "year": 1,
+  "slot_count": 1,
+  "attendance_type": "regular",
+  "program": "CS",
+  "latitude": 24.93553388673033,
+  "longitude": 67.0442592957783,
+  "radius_meters": 50
 }
 ```
 
@@ -199,6 +210,24 @@ Tracks individual student attendance within a session.
     "qr_only": 1
   }
 }
+
+### 6. QR Scan (Student)
+
+**Endpoint:** `POST /api/attendance/qr-scan/`
+
+**Authentication:** Required
+
+**Request Body:**
+```json
+{
+  "qr_token": "<token from /attendance-sessions/{id}/qr/>",
+  "student_id": 1,
+  "latitude": 24.93553388673033,
+  "longitude": 67.0442592957783
+}
+```
+
+**Geo-fencing rule:** If the session was started with `latitude` and `longitude`, the QR scan must include `latitude/longitude` and must be within `radius_meters` of the session location. Otherwise the server returns `400`.
 ```
 
 ### 6. RFID Scan

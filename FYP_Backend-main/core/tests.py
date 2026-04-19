@@ -1,4 +1,5 @@
 from django.test import TestCase
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework.test import APITestCase
 from rest_framework import status
@@ -667,6 +668,7 @@ class UpdateAttendanceRequestCRUDTestCase(AuthenticatedAPITestCase):
             teacher=self.teacher,
             student=self.student,
             course=self.course,
+            management=self.management,
             classes_to_add='Class A, Class B',
             reason='Student was marked absent by mistake'
         )
@@ -688,7 +690,8 @@ class UpdateAttendanceRequestCRUDTestCase(AuthenticatedAPITestCase):
             student_rollNo='RFID003',
             year=2,
             dept='IT',
-            section='B'
+            section='B',
+            management=self.management,
         )
         data = {
             'teacher_rollNo': self.teacher.teacher_rollNo,
@@ -703,6 +706,35 @@ class UpdateAttendanceRequestCRUDTestCase(AuthenticatedAPITestCase):
         self.assertEqual(response.data['status'], 'pending')
         self.assertEqual(response.data['teacher_rollNo'], self.teacher.teacher_rollNo)
         self.assertEqual(response.data['student_rollNo'], new_student.student_rollNo)
+
+    def test_create_update_attendance_request_accepts_course_code_and_slot_count(self):
+        """Frontend can send course_code + slot_count (no classes_to_add, no teacher_rollNo)."""
+        course = Course.objects.create(course_name='Algo', course_code='CS420')
+        # Ensure there is a unique teacher assignment for inference.
+        TaughtCourse.objects.create(
+            teacher=self.teacher,
+            course=course,
+            section=self.student.section,
+            year=self.student.year,
+        )
+
+        data = {
+            'student_rollNo': self.student.student_rollNo,
+            'course_code': 'CS420',
+            'slot_count': 2,
+            'attendanceType': 'regular',
+            'reason': 'Late arrival',
+            'program': self.student.dept,
+            'section': self.student.section,
+        }
+        response = self.client.post(self.list_url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['teacher_rollNo'], self.teacher.teacher_rollNo)
+        self.assertEqual(response.data['student_rollNo'], self.student.student_rollNo)
+        self.assertEqual(response.data['course'], course.course_id)
+        # classes_to_add should be synthesized from slot_count -> 2 entries.
+        self.assertIn('Slot 1', response.data['classes_to_add'])
+        self.assertIn('Slot 2', response.data['classes_to_add'])
     
     def test_retrieve_update_attendance_request(self):
         """Test retrieving a single update attendance request"""
@@ -769,7 +801,6 @@ class UpdateAttendanceRequestCRUDTestCase(AuthenticatedAPITestCase):
         }
         response = self.client.post(self.list_url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('teacher_rollNo', response.data)
         self.assertIn('student_rollNo', response.data)
 
 
@@ -842,12 +873,9 @@ class UpdateAttendanceRequestApproveRejectTestCase(APITestCase):
             teacher=self.teacher
         )
         self.assertEqual(student_course.classes_attended_count, 2)
-        
-        # Verify the request was updated
-        self.attendance_request.refresh_from_db()
-        self.assertEqual(self.attendance_request.status, 'approved')
-        self.assertEqual(self.attendance_request.processed_by, self.management)
-        self.assertIsNotNone(self.attendance_request.processed_at)
+
+        # Verify the request was deleted after processing
+        self.assertFalse(UpdateAttendanceRequest.objects.filter(id=self.attendance_request.id).exists())
     
     def test_approve_request_updates_existing_attendance(self):
         """Test that approving a request updates existing attendance"""
@@ -882,12 +910,9 @@ class UpdateAttendanceRequestApproveRejectTestCase(APITestCase):
             course=self.course,
             teacher=self.teacher
         ).exists())
-        
-        # Verify the request was updated
-        self.attendance_request.refresh_from_db()
-        self.assertEqual(self.attendance_request.status, 'rejected')
-        self.assertEqual(self.attendance_request.processed_by, self.management)
-        self.assertIsNotNone(self.attendance_request.processed_at)
+
+        # Verify the request was deleted after processing
+        self.assertFalse(UpdateAttendanceRequest.objects.filter(id=self.attendance_request.id).exists())
     
     def test_non_management_cannot_approve(self):
         """Test that non-management users cannot approve requests"""
@@ -919,8 +944,8 @@ class UpdateAttendanceRequestApproveRejectTestCase(APITestCase):
         
         # Try to approve again
         response = self.client.post(self.approve_url)
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('already been approved', response.data['error'])
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn('not found', response.data['error'].lower())
     
     def test_cannot_reject_already_processed_request(self):
         """Test that already processed requests cannot be rejected"""
@@ -930,8 +955,8 @@ class UpdateAttendanceRequestApproveRejectTestCase(APITestCase):
         
         # Try to reject again
         response = self.client.post(self.reject_url)
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('already been rejected', response.data['error'])
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn('not found', response.data['error'].lower())
     
     def test_unauthenticated_cannot_approve(self):
         """Test that unauthenticated users cannot approve requests"""
@@ -982,6 +1007,26 @@ class AttendanceSessionTestCase(APITestCase):
         self.assertEqual(response.data['session']['status'], 'active')
         self.assertIn('qr_code_token', response.data['session'])
         self.assertIsNotNone(response.data['session']['qr_code_token'])
+
+    def test_create_attendance_session_accepts_extra_fields(self):
+        """Session create should ignore extra frontend fields (geo/program/attendance_type)."""
+        data = {
+            'teacher': self.teacher.teacher_id,
+            'course': self.course.course_id,
+            'section': 'A',
+            'year': 1,
+            'slot_count': 2,
+            'attendance_type': 'regular',
+            'program': 'CS',
+            'latitude': 24.93553388673033,
+            'longitude': 67.0442592957783,
+            'radius_meters': 50,
+        }
+        response = self.client.post(self.session_url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['session']['slot_count'], 2)
+        self.assertEqual(response.data['session']['status'], 'active')
     
     def test_list_attendance_sessions(self):
         """Test listing attendance sessions"""
@@ -1212,6 +1257,10 @@ class QRScanTestCase(APITestCase):
             section='A',
             year=1,
             qr_code_token='test_token_1',
+            slot_count=2,
+            latitude=24.93553388673033,
+            longitude=67.0442592957783,
+            radius_meters=50,
             status='active'
         )
         
@@ -1222,7 +1271,9 @@ class QRScanTestCase(APITestCase):
         """Test successful QR scan"""
         data = {
             'qr_token': 'test_token_1',
-            'student_id': self.student.student_id
+            'student_id': self.student.student_id,
+            'latitude': 24.93553388673033,
+            'longitude': 67.0442592957783,
         }
         response = self.client.post(self.qr_scan_url, data, format='json')
         
@@ -1242,7 +1293,9 @@ class QRScanTestCase(APITestCase):
         """Test QR scan with invalid token"""
         data = {
             'qr_token': 'invalid_token',
-            'student_id': self.student.student_id
+            'student_id': self.student.student_id,
+            'latitude': 24.93553388673033,
+            'longitude': 67.0442592957783,
         }
         response = self.client.post(self.qr_scan_url, data, format='json')
         
@@ -1255,11 +1308,47 @@ class QRScanTestCase(APITestCase):
         
         data = {
             'qr_token': 'test_token_1',
-            'student_id': self.student.student_id
+            'student_id': self.student.student_id,
+            'latitude': 24.93553388673033,
+            'longitude': 67.0442592957783,
         }
         response = self.client.post(self.qr_scan_url, data, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_qr_scan_outside_radius_rejected(self):
+        """QR scan should be rejected when device is outside session radius."""
+        data = {
+            'qr_token': 'test_token_1',
+            'student_id': self.student.student_id,
+            # ~111m away east/west (approx) which exceeds 50m
+            'latitude': 24.93553388673033,
+            'longitude': 67.0452592957783,
+        }
+        response = self.client.post(self.qr_scan_url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Outside', response.data.get('error', ''))
+
+    @override_settings(ATTENDANCE_REQUIRE_RFID=False)
+    def test_qr_only_marks_present_when_rfid_not_required(self):
+        """When 2FA is disabled, a QR scan alone should mark the student present."""
+        data = {
+            'qr_token': 'test_token_1',
+            'student_id': self.student.student_id,
+            'latitude': 24.93553388673033,
+            'longitude': 67.0442592957783,
+        }
+        response = self.client.post(self.qr_scan_url, data, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['is_present'])
+
+        # Re-scan should not add more attendance for the same session.
+        response2 = self.client.post(self.qr_scan_url, data, format='json')
+        self.assertEqual(response2.status_code, status.HTTP_200_OK)
+        self.assertTrue(response2.data['is_present'])
+
+        student_course = StudentCourse.objects.get(student=self.student, course=self.course, teacher=self.teacher)
+        self.assertEqual(student_course.classes_attended_count, 2)
 
 
 class TwoFactorAttendanceTestCase(APITestCase):
@@ -1292,6 +1381,10 @@ class TwoFactorAttendanceTestCase(APITestCase):
             section='A',
             year=1,
             qr_code_token='test_token_1',
+            slot_count=2,
+            latitude=24.93553388673033,
+            longitude=67.0442592957783,
+            radius_meters=50,
             status='active'
         )
         
@@ -1313,7 +1406,9 @@ class TwoFactorAttendanceTestCase(APITestCase):
         # Then scan QR
         qr_data = {
             'qr_token': 'test_token_1',
-            'student_id': self.student.student_id
+            'student_id': self.student.student_id,
+            'latitude': 24.93553388673033,
+            'longitude': 67.0442592957783,
         }
         qr_response = self.client.post(self.qr_scan_url, qr_data, format='json')
         self.assertEqual(qr_response.status_code, status.HTTP_200_OK)
@@ -1332,14 +1427,29 @@ class TwoFactorAttendanceTestCase(APITestCase):
             course=self.course,
             teacher=self.teacher
         )
-        self.assertEqual(student_course.classes_attended_count, 1)
+        self.assertEqual(student_course.classes_attended_count, 2)
+
+        # Scanning again should not add more attendance for the same session.
+        qr_data = {
+            'qr_token': 'test_token_1',
+            'student_id': self.student.student_id,
+            'latitude': 24.93553388673033,
+            'longitude': 67.0442592957783,
+        }
+        qr_response2 = self.client.post(self.qr_scan_url, qr_data, format='json')
+        self.assertEqual(qr_response2.status_code, status.HTTP_200_OK)
+        self.assertTrue(qr_response2.data['is_present'])
+        student_course.refresh_from_db()
+        self.assertEqual(student_course.classes_attended_count, 2)
     
     def test_qr_then_rfid_marks_present(self):
         """Test that scanning QR first then RFID also marks present"""
         # First scan QR
         qr_data = {
             'qr_token': 'test_token_1',
-            'student_id': self.student.student_id
+            'student_id': self.student.student_id,
+            'latitude': 24.93553388673033,
+            'longitude': 67.0442592957783,
         }
         qr_response = self.client.post(self.qr_scan_url, qr_data, format='json')
         self.assertEqual(qr_response.status_code, status.HTTP_200_OK)
@@ -1380,7 +1490,9 @@ class TwoFactorAttendanceTestCase(APITestCase):
         """Test that only QR scan does not mark student as present"""
         qr_data = {
             'qr_token': 'test_token_1',
-            'student_id': self.student.student_id
+            'student_id': self.student.student_id,
+            'latitude': 24.93553388673033,
+            'longitude': 67.0442592957783,
         }
         response = self.client.post(self.qr_scan_url, qr_data, format='json')
         

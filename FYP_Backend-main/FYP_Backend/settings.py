@@ -193,3 +193,14 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
+# Attendance scanning behavior
+# - Default: require both RFID + QR (2FA)
+# - For testing: set ATTENDANCE_REQUIRE_RFID=0 to allow QR-only or RFID-only
+if TESTING:
+    # Keep unit tests deterministic (2FA on by default); tests can override via override_settings.
+    ATTENDANCE_REQUIRE_RFID = True
+else:
+    ATTENDANCE_REQUIRE_RFID = os.environ.get('ATTENDANCE_REQUIRE_RFID', '1').strip().lower() in {
+        '1', 'true', 'yes', 'y', 'on'
+    }
+

@@ -20,6 +20,8 @@ import qrcode
 import io
 import base64
 import secrets
+import math
+from django.conf import settings
 from .serializers import (
     StudentRegistrationSerializer,
     TeacherRegistrationSerializer,
@@ -959,16 +961,25 @@ class TeacherViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = self.queryset.all()
 
-        if self.request.user.is_superuser:
-            management = None
-        else:
-            management = _get_management_for_user(self.request.user)
-            if not management:
-                return queryset.none()
+        # Scope results to the request user's management when possible.
+        # - Management users: see their management's teachers
+        # - Teacher users: see teachers in their management
+        # - Student users: see teachers in their management
+        # If no management can be inferred, keep queryset unscoped (legacy behavior).
+        scope_management = None
+        if not self.request.user.is_superuser:
+            scope_management = _get_management_for_user(self.request.user)
+            if not scope_management:
+                teacher_user = _get_teacher_for_user(self.request.user)
+                if teacher_user and teacher_user.management_id:
+                    scope_management = teacher_user.management
+            if not scope_management:
+                student_user = _get_student_for_user(self.request.user)
+                if student_user and student_user.management_id:
+                    scope_management = student_user.management
 
-        # Scope to the logged-in management's teachers
-        if management:
-            queryset = queryset.filter(management=management)
+        if scope_management:
+            queryset = queryset.filter(management=scope_management)
 
         # Filter by year or program – stored as comma-separated strings, match whole values only
         # Accept both singular (?year=) and plural (?years=) param names
@@ -1472,32 +1483,54 @@ class UpdateAttendanceRequestViewSet(viewsets.ModelViewSet):
         student_roll_no = self.request.query_params.get('student_rollNo') or self.request.query_params.get('student')
         course_id = self.request.query_params.get('course')
         request_status = self.request.query_params.get('status')
+        include_processed = str(self.request.query_params.get('include_processed', '')).lower() in {'1', 'true', 'yes'}
         if teacher_roll_no:
             queryset = queryset.filter(teacher__teacher_rollNo=teacher_roll_no)
         if student_roll_no:
             queryset = queryset.filter(student__student_rollNo=student_roll_no)
         if course_id:
             queryset = queryset.filter(course_id=course_id)
-        if request_status:
+
+        # Default behavior: only show pending requests unless the client explicitly
+        # requests a status filter or asks to include processed items.
+        if request_status and request_status != 'all':
             queryset = queryset.filter(status=request_status)
+        elif not include_processed:
+            queryset = queryset.filter(status='pending')
         return queryset
 
     def perform_create(self, serializer):
-        """Auto-set management from the teacher's management on create"""
+        """Auto-set management from the teacher's management on create."""
         teacher = serializer.validated_data.get('teacher')
         management = teacher.management if teacher else None
-        if not self.request.user.is_superuser:
-            current_management = _get_management_for_user(self.request.user)
-            if not current_management:
-                raise DRFValidationError({'error': 'Only management users can create attendance requests'})
-            if not management or management.Management_id != current_management.Management_id:
-                raise DRFValidationError({'error': 'Teacher does not belong to your management'})
+
+        if self.request.user.is_superuser:
+            serializer.save(management=management)
+            return
+
+        current_management = _get_management_for_user(self.request.user)
+        current_teacher = _get_teacher_for_user(self.request.user)
+
+        # Teachers can create requests for themselves.
+        if current_teacher:
+            if not teacher:
+                teacher = current_teacher
+                management = teacher.management
+            if teacher.teacher_id != current_teacher.teacher_id:
+                raise DRFValidationError({'error': 'Teachers can only create attendance requests for themselves'})
+            serializer.save(management=management)
+            return
+
+        # Management users can create requests for teachers within their management.
+        if not current_management:
+            raise DRFValidationError({'error': 'Only management/teacher users can create attendance requests'})
+        if not management or management.Management_id != current_management.Management_id:
+            raise DRFValidationError({'error': 'Teacher does not belong to your management'})
         serializer.save(management=management)
 
     def _process_request(self, request, pk, approve):
         """Helper method to approve or reject a request"""
         from django.utils import timezone
-        from django.http import Http404
 
         # Ensure non-management users get an explicit authorization error.
         try:
@@ -1508,13 +1541,13 @@ class UpdateAttendanceRequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
 
+        # Don't use self.get_object()/get_queryset() here because the list endpoint
+        # defaults to pending-only; approve/reject must still be able to load
+        # already-processed requests to return the proper 400 response.
         try:
-            attendance_request = self.get_object()
-        except Http404:
-            return Response(
-                {'error': 'Update attendance request not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            attendance_request = UpdateAttendanceRequest.objects.get(pk=pk, management=management)
+        except UpdateAttendanceRequest.DoesNotExist:
+            return Response({'error': 'Update attendance request not found'}, status=status.HTTP_404_NOT_FOUND)
 
         if attendance_request.status != 'pending':
             return Response(
@@ -1522,40 +1555,41 @@ class UpdateAttendanceRequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if approve:
-            # Approve: Update the student's attendance in the StudentCourse
-            added_count = len([c.strip() for c in (attendance_request.classes_to_add or '').split(',') if c.strip()])
-            try:
-                student_course = StudentCourse.objects.get(
-                    student=attendance_request.student,
-                    course=attendance_request.course,
-                    teacher=attendance_request.teacher
-                )
-                student_course.classes_attended_count = (student_course.classes_attended_count or 0) + added_count
-                student_course.save(update_fields=['classes_attended_count'])
-            except StudentCourse.DoesNotExist:
-                # Create new StudentCourse record if it doesn't exist
-                StudentCourse.objects.create(
-                    student=attendance_request.student,
-                    course=attendance_request.course,
-                    teacher=attendance_request.teacher,
-                    classes_attended_count=added_count,
-                )
-            attendance_request.status = 'approved'
-            message = 'Attendance request approved and attendance updated'
-        else:
-            attendance_request.status = 'rejected'
-            message = 'Attendance request rejected'
+        with transaction.atomic():
+            if approve:
+                # Approve: Update the student's attendance in the StudentCourse
+                added_count = len([c.strip() for c in (attendance_request.classes_to_add or '').split(',') if c.strip()])
+                try:
+                    student_course = StudentCourse.objects.get(
+                        student=attendance_request.student,
+                        course=attendance_request.course,
+                        teacher=attendance_request.teacher
+                    )
+                    student_course.classes_attended_count = (student_course.classes_attended_count or 0) + added_count
+                    student_course.save(update_fields=['classes_attended_count'])
+                except StudentCourse.DoesNotExist:
+                    # Create new StudentCourse record if it doesn't exist
+                    StudentCourse.objects.create(
+                        student=attendance_request.student,
+                        course=attendance_request.course,
+                        teacher=attendance_request.teacher,
+                        classes_attended_count=added_count,
+                    )
+                attendance_request.status = 'approved'
+                message = 'Attendance request approved and attendance updated'
+            else:
+                attendance_request.status = 'rejected'
+                message = 'Attendance request rejected'
 
-        attendance_request.processed_at = timezone.now()
-        attendance_request.processed_by = management
-        attendance_request.save()
+            attendance_request.processed_at = timezone.now()
+            attendance_request.processed_by = management
 
-        serializer = self.get_serializer(attendance_request)
-        return Response({
-            'message': message,
-            'request': serializer.data
-        }, status=status.HTTP_200_OK)
+            # Return the processed state in the response, but remove it from the DB
+            # so it no longer appears anywhere after approval/rejection.
+            serializer_data = self.get_serializer(attendance_request).data
+            attendance_request.delete()
+
+        return Response({'message': message, 'request': serializer_data}, status=status.HTTP_200_OK)
 
     def approve(self, request, pk=None):
         """Approve the attendance update request"""
@@ -1805,22 +1839,36 @@ class RFIDScanView(APIView):
     """
     permission_classes = [AllowAny]  # Allow hardware to scan without auth
 
-    def _mark_attendance_if_complete(self, record, session):
-        """
-        Helper method to mark attendance and update StudentCourse if both scans are complete.
-        """
-        if record.rfid_scanned and record.qr_scanned and not record.is_present:
-            record.is_present = True
-            record.marked_present_at = timezone.now()
-            
-            # Update StudentCourse attendance
+    def _try_mark_present_and_increment_once(self, record, session):
+        """Atomically mark present and increment attendance only once per session/student."""
+        require_rfid = getattr(settings, 'ATTENDANCE_REQUIRE_RFID', True)
+
+        if require_rfid:
+            complete_filter = Q(rfid_scanned=True, qr_scanned=True)
+        else:
+            complete_filter = Q(rfid_scanned=True) | Q(qr_scanned=True)
+
+        with transaction.atomic():
+            updated = AttendanceRecord.objects.filter(
+                pk=record.pk,
+                is_present=False,
+            ).filter(complete_filter).update(
+                is_present=True,
+                marked_present_at=timezone.now(),
+            )
+
+            # Only the first caller that flips is_present from False->True
+            # is allowed to increment StudentCourse.
+            if updated != 1:
+                return
+
             student_course, _ = StudentCourse.objects.get_or_create(
                 student=record.student,
                 course=session.course,
                 teacher=session.teacher,
                 defaults={'classes_attended_count': 0}
             )
-            
+
             slot_count = max(1, int(getattr(session, 'slot_count', 1) or 1))
             student_course.classes_attended_count = (student_course.classes_attended_count or 0) + slot_count
             if student_course.teacher_id is None:
@@ -1885,10 +1933,13 @@ class RFIDScanView(APIView):
         record.rfid_scanned = True
         record.rfid_scanned_at = timezone.now()
 
-        # Check if both RFID and QR are scanned
-        self._mark_attendance_if_complete(record, session)
+        # Persist scan state before attempting to finalize attendance.
+        record.save(update_fields=['rfid_scanned', 'rfid_scanned_at'])
 
-        record.save()
+        # Check if both RFID and QR are scanned
+        self._try_mark_present_and_increment_once(record, session)
+
+        record.refresh_from_db()
 
         return Response({
             'message': 'RFID scanned successfully',
@@ -1907,22 +1958,46 @@ class QRScanView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
-    def _mark_attendance_if_complete(self, record, session):
-        """
-        Helper method to mark attendance and update StudentCourse if both scans are complete.
-        """
-        if record.rfid_scanned and record.qr_scanned and not record.is_present:
-            record.is_present = True
-            record.marked_present_at = timezone.now()
-            
-            # Update StudentCourse attendance
+    @staticmethod
+    def _haversine_meters(lat1, lon1, lat2, lon2):
+        """Compute great-circle distance between two points on Earth in meters."""
+        r = 6371000.0
+        phi1 = math.radians(lat1)
+        phi2 = math.radians(lat2)
+        d_phi = math.radians(lat2 - lat1)
+        d_lambda = math.radians(lon2 - lon1)
+        a = (math.sin(d_phi / 2) ** 2) + math.cos(phi1) * math.cos(phi2) * (math.sin(d_lambda / 2) ** 2)
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        return r * c
+
+    def _try_mark_present_and_increment_once(self, record, session):
+        """Atomically mark present and increment attendance only once per session/student."""
+        require_rfid = getattr(settings, 'ATTENDANCE_REQUIRE_RFID', True)
+
+        if require_rfid:
+            complete_filter = Q(rfid_scanned=True, qr_scanned=True)
+        else:
+            complete_filter = Q(rfid_scanned=True) | Q(qr_scanned=True)
+
+        with transaction.atomic():
+            updated = AttendanceRecord.objects.filter(
+                pk=record.pk,
+                is_present=False,
+            ).filter(complete_filter).update(
+                is_present=True,
+                marked_present_at=timezone.now(),
+            )
+
+            if updated != 1:
+                return
+
             student_course, _ = StudentCourse.objects.get_or_create(
                 student=record.student,
                 course=session.course,
                 teacher=session.teacher,
                 defaults={'classes_attended_count': 0}
             )
-            
+
             slot_count = max(1, int(getattr(session, 'slot_count', 1) or 1))
             student_course.classes_attended_count = (student_course.classes_attended_count or 0) + slot_count
             if student_course.teacher_id is None:
@@ -1938,6 +2013,8 @@ class QRScanView(APIView):
 
         qr_token = serializer.validated_data['qr_token']
         student_id = serializer.validated_data['student_id']
+        scan_lat = serializer.validated_data.get('latitude')
+        scan_lon = serializer.validated_data.get('longitude')
 
         # Get student
         try:
@@ -1964,6 +2041,29 @@ class QRScanView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Geo-fencing: if the session was started with a location, enforce that
+        # QR scans must happen within radius_meters of that location.
+        if session.latitude is not None and session.longitude is not None:
+            if scan_lat is None or scan_lon is None:
+                return Response(
+                    {'error': 'Location is required for QR scan', 'required_fields': ['latitude', 'longitude']},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if not (-90 <= scan_lat <= 90) or not (-180 <= scan_lon <= 180):
+                return Response({'error': 'Invalid latitude/longitude'}, status=status.HTTP_400_BAD_REQUEST)
+
+            radius_meters = int(getattr(session, 'radius_meters', 50) or 50)
+            distance_meters = self._haversine_meters(scan_lat, scan_lon, session.latitude, session.longitude)
+            if distance_meters > radius_meters:
+                return Response(
+                    {
+                        'error': 'Outside allowed QR scan radius',
+                        'distance_meters': round(distance_meters, 2),
+                        'radius_meters': radius_meters,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
         # Check if student is enrolled in this course/section/year
         if student.section != session.section or student.year != session.year:
             return Response(
@@ -1987,10 +2087,13 @@ class QRScanView(APIView):
         record.qr_scanned = True
         record.qr_scanned_at = timezone.now()
 
-        # Check if both RFID and QR are scanned
-        self._mark_attendance_if_complete(record, session)
+        # Persist scan state before attempting to finalize attendance.
+        record.save(update_fields=['qr_scanned', 'qr_scanned_at'])
 
-        record.save()
+        # Check if both RFID and QR are scanned
+        self._try_mark_present_and_increment_once(record, session)
+
+        record.refresh_from_db()
 
         return Response({
             'message': 'QR code scanned successfully',
