@@ -16,9 +16,11 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from events.views import event_register_redirect
 
 urlpatterns = [
        path('admin/', admin.site.urls),
        path('api/', include('core.urls')),
        path('api/events/', include('events.urls')),
+       path('event-register/<str:token>', event_register_redirect, name='event-register-redirect'),
 ]

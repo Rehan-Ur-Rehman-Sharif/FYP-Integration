@@ -1,6 +1,10 @@
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+import base64
+import io
+import qrcode
+from django.utils import timezone
 from rest_framework import serializers
 from .models import Event, Registration, Attendance, EventParticipant
 
@@ -31,9 +35,8 @@ class EventSerializer(serializers.ModelSerializer):
     )
 
     # 'qrImage' ← attendance_qr_code_url
-    qrImage = serializers.URLField(
-        source='attendance_qr_code_url', required=False, allow_blank=True, default='',
-    )
+    qrImage = serializers.SerializerMethodField()
+    isUpcoming = serializers.SerializerMethodField()
 
     # ── Computed / nested fields ─────────────────────────────────────────────────
     registeredCount = serializers.SerializerMethodField()
@@ -54,6 +57,7 @@ class EventSerializer(serializers.ModelSerializer):
             'regEnd',
             'registrationLink',
             'qrImage',
+            'isUpcoming',
             'registeredCount',
             'participants',
             'attendance',
@@ -65,6 +69,15 @@ class EventSerializer(serializers.ModelSerializer):
 
     def get_registeredCount(self, obj):
         return obj.registrations.count()
+
+    def get_isUpcoming(self, obj):
+        now = timezone.now()
+        today = now.date()
+        if obj.event_date:
+            return obj.event_date >= today
+        if obj.start_time:
+            return obj.start_time >= now
+        return False
 
     def get_participants(self, obj):
         result = []
@@ -88,6 +101,19 @@ class EventSerializer(serializers.ModelSerializer):
                 'age': age,
             })
         return result
+
+    def get_qrImage(self, obj):
+        """Return a scannable QR image as base64 data URL for this event."""
+        qr_payload = obj.attendance_qr_code_url or obj.registration_link or f"event:{obj.id}"
+        qr = qrcode.QRCode(version=1, box_size=10, border=5)
+        qr.add_data(qr_payload)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        return f'data:image/png;base64,{img_base64}'
 
     def get_attendance(self, obj):
         result = []

@@ -4,6 +4,7 @@ import { User } from "lucide-react";
 
 export default function EventModal({ event, onClose }) {
   const [tab, setTab] = useState("details"); // details | participants | attendance
+  const isUpcoming = Boolean(event.isUpcoming);
 
   return (
     <div className="modal-overlay">
@@ -49,10 +50,14 @@ export default function EventModal({ event, onClose }) {
                   <p style={{ color: "#444" }}>{event.description}</p>
 
                   <label>Registration Link</label>
-                  <p style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <input readOnly value={event.registrationLink} style={{ flex: 1, padding: 8, borderRadius: 6, border: "1px solid #eee", background: "#fafafa" }} />
-                    <button className="small-btn" onClick={() => navigator.clipboard?.writeText(event.registrationLink)}>Copy</button>
-                  </p>
+                  {isUpcoming ? (
+                    <p style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <input readOnly value={event.registrationLink} style={{ flex: 1, padding: 8, borderRadius: 6, border: "1px solid #eee", background: "#fafafa" }} />
+                      <button className="small-btn" onClick={() => navigator.clipboard?.writeText(event.registrationLink)}>Copy</button>
+                    </p>
+                  ) : (
+                    <p style={{ color: "#777" }}>Registration closed for this event.</p>
+                  )}
                 </div>
               </>
             )}
@@ -110,10 +115,16 @@ export default function EventModal({ event, onClose }) {
               <>
                 <div style={{ textAlign: "center" }}>
                   <div style={{ fontWeight: 700, marginBottom: 8 }}>Attendance QR Code</div>
-                  <div style={{ border: "2px solid #f0e6e6", padding: 8, borderRadius: 8 }}>
-                    <img src={event.qrImage} alt="QR" style={{ width: "100%", borderRadius: 6 }} />
-                  </div>
-                  <div style={{ marginTop: 8, color: "#777", fontSize: 13 }}>Participants scan this QR code to mark attendance</div>
+                  {isUpcoming ? (
+                    <>
+                      <div style={{ border: "2px solid #f0e6e6", padding: 8, borderRadius: 8 }}>
+                        <img src={event.qrImage} alt="QR" style={{ width: "100%", borderRadius: 6 }} />
+                      </div>
+                      <div style={{ marginTop: 8, color: "#777", fontSize: 13 }}>Participants scan this QR code to mark attendance</div>
+                    </>
+                  ) : (
+                    <div style={{ color: "#777", fontSize: 13, marginTop: 8 }}>QR sharing disabled for past events.</div>
+                  )}
                 </div>
               </>
             )}

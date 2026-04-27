@@ -1,10 +1,8 @@
-import React, { useState } from "react";
-import orgAdminData from "../../data/OrgAdminData";
+import React, { useEffect, useState } from "react";
+import axios from "../../utils/axiosInstance";
 
 const EventAdmins = () => {
-  const initialData = orgAdminData.eventAdmins;
-
-  const [eventAdmins, setEventAdmins] = useState(initialData);
+  const [eventAdmins, setEventAdmins] = useState([]);
   const [showModal, setShowModal] = useState(false);
 
   const [selectedAdmin, setSelectedAdmin] = useState(null);
@@ -24,46 +22,82 @@ const EventAdmins = () => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleCreateAdmin = () => {
+  const normalizeList = (payload) => {
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.results)) return payload.results;
+    return [];
+  };
+
+  const fetchEventAdmins = async () => {
+    try {
+      const { data } = await axios.get("/api/events/event-admins/");
+      setEventAdmins(normalizeList(data));
+    } catch (error) {
+      console.error("Failed to fetch event admins:", error);
+      setEventAdmins([]);
+    }
+  };
+
+  useEffect(() => {
+    fetchEventAdmins();
+  }, []);
+
+  const handleCreateAdmin = async () => {
     if (!formData.name || !formData.email) return;
 
-    const newAdmin = {
-      id: Date.now(),
-      ...formData,
-      eventsManaged: 0,
-      activeEvents: 0,
-      status: "active",
-      joinDate: new Date().toISOString().split("T")[0],
-    };
+    try {
+      const payload = {
+        name: formData.name,
+        email: formData.email,
+        organization: formData.organization,
+        status: "active",
+      };
 
-    setEventAdmins([newAdmin, ...eventAdmins]);
-    setShowModal(false);
+      const { data } = await axios.post("/api/events/event-admins/", payload);
+      setEventAdmins((prev) => [data, ...prev]);
+      setShowModal(false);
 
-    setFormData({
-      name: "",
-      email: "",
-      organization: "",
-    });
+      setFormData({
+        name: "",
+        email: "",
+        organization: "",
+      });
+    } catch (error) {
+      console.error("Failed to create event admin:", error);
+      alert("Could not create event admin. Please try again.");
+    }
   };
-   // ✅ DELETE
- const handleDelete = (id) => {
-  const updated = eventAdmins.filter((a) => a.id !== id);
-  setEventAdmins(updated); 
-};
-  // ✅ UPDATE
-  const handleUpdate = () => {
-  const updatedAdmins = eventAdmins.map((a) =>
-    a.id === selectedAdmin.id
-      ? {
-          ...a,
-          status: editData.status,
-        }
-      : a
-  );
 
-  setEventAdmins(updatedAdmins); 
-  setEditModal(false);
-};
+  // ✅ DELETE
+  const handleDelete = async (id) => {
+    try {
+      await axios.delete(`/api/events/event-admins/${id}/`);
+      setEventAdmins((prev) => prev.filter((a) => a.id !== id));
+    } catch (error) {
+      console.error("Failed to delete event admin:", error);
+      alert("Could not delete event admin. Please try again.");
+    }
+  };
+
+  // ✅ UPDATE
+  const handleUpdate = async () => {
+    if (!selectedAdmin) return;
+
+    try {
+      const { data } = await axios.patch(`/api/events/event-admins/${selectedAdmin.id}/`, {
+        status: editData.status,
+      });
+
+      setEventAdmins((prev) =>
+        prev.map((a) => (a.id === selectedAdmin.id ? data : a))
+      );
+      setSelectedAdmin(data);
+      setEditModal(false);
+    } catch (error) {
+      console.error("Failed to update event admin:", error);
+      alert("Could not update event admin. Please try again.");
+    }
+  };
 
   return (
     <div className="table-container">

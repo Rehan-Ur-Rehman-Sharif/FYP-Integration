@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
 import "./login1.css";
 import "./SignUp";
@@ -13,6 +13,7 @@ const Login = () => {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const location = useLocation();
 
   useEffect(() => {
     document.body.classList.add("login-bg");
@@ -22,7 +23,35 @@ const Login = () => {
     };
   }, []);
 
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const token = (params.get("eventToken") || "").trim();
+    if (token) {
+      localStorage.setItem("pendingEventToken", token);
+    }
+  }, [location.search]);
+
   const navigate = useNavigate();
+
+  const registerPendingInvite = async (accessToken) => {
+    const pendingToken = (localStorage.getItem("pendingEventToken") || "").trim();
+    if (!pendingToken) return;
+
+    try {
+      await axios.post(
+        `/api/events/register-by-link/${encodeURIComponent(pendingToken)}/`,
+        {},
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      localStorage.removeItem("pendingEventToken");
+    } catch (err) {
+      const apiError = err.response?.data;
+      const message = apiError ? Object.values(apiError).flat().join(" ") : "";
+      if (message) {
+        alert(message);
+      }
+    }
+  };
 
   const handleOnChange = (e) => {
     const { name, value } = e.target;
@@ -148,6 +177,87 @@ const Login = () => {
         );
 
         navigate("/orgadmin");
+      } catch (err) {
+        const result = err.response?.data;
+        if (result) {
+          const messages = Object.values(result).flat().join(" ");
+          setError(messages || "Invalid credentials. Please try again.");
+        } else {
+          setError("Network error. Please check your connection and try again.");
+        }
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    /* =========================
+       EVENT ADMIN LOGIN
+    ========================= */
+    if (data.role === "advisor") {
+      try {
+        setLoading(true);
+        const { data: result } = await axios.post("/api/login", {
+          email: data.email,
+          password: data.password,
+          role: "advisor",
+        });
+
+        localStorage.setItem(
+          "currentUser",
+          JSON.stringify({
+            role: "advisor",
+            token: result.access,
+            refresh: result.refresh,
+            user_type: result.user_type,
+            advisor_id: result.id,
+            name: result.name,
+            email: result.email,
+          })
+        );
+
+        navigate("/eventadmin");
+      } catch (err) {
+        const result = err.response?.data;
+        if (result) {
+          const messages = Object.values(result).flat().join(" ");
+          setError(messages || "Invalid credentials. Please try again.");
+        } else {
+          setError("Network error. Please check your connection and try again.");
+        }
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    /* =========================
+       PARTICIPANT LOGIN
+    ========================= */
+    if (data.role === "participant") {
+      try {
+        setLoading(true);
+        const { data: result } = await axios.post("/api/login", {
+          email: data.email,
+          password: data.password,
+          role: "participant",
+        });
+
+        localStorage.setItem(
+          "currentUser",
+          JSON.stringify({
+            role: "participant",
+            token: result.access,
+            refresh: result.refresh,
+            user_type: result.user_type,
+            participant_id: result.id,
+            name: result.name,
+            email: result.email,
+          })
+        );
+
+        await registerPendingInvite(result.access);
+        navigate("/participant");
       } catch (err) {
         const result = err.response?.data;
         if (result) {

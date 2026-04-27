@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   User,
   Mail,
@@ -14,7 +14,7 @@ import {
   ImagePlus,
 } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
-import participants from "../../data/ParticipantData";
+import axiosInstance from "../../utils/axiosInstance";
 import "./participant.css";
 
 /* ─── tiny Event Detail Modal ─── */
@@ -160,17 +160,27 @@ const ParticipantDashboard = () => {
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [scanningEvent, setScanningEvent] = useState(null);
   const [uploadEvent, setUploadEvent]     = useState(null);
+  const [participantData, setParticipantData] = useState({
+    profile: { name: "", email: "", phone: "" },
+    upcomingEvents: [],
+    pastEvents: [],
+  });
   const html5QrRef = useRef(null);
 
-  /* Resolve current participant from localStorage */
-  const participantData = useMemo(() => {
-    const stored = localStorage.getItem("currentUser");
-    if (!stored) return participants[0];
-    const currentUser = JSON.parse(stored);
-    return (
-      participants.find((p) => p.profile.email === currentUser.email) ||
-      participants[0]
-    );
+  useEffect(() => {
+    const fetchDashboard = async () => {
+      try {
+        const { data } = await axiosInstance.get("/api/events/participants/dashboard/");
+        setParticipantData({
+          profile: data?.profile || { name: "", email: "", phone: "" },
+          upcomingEvents: Array.isArray(data?.upcomingEvents) ? data.upcomingEvents : [],
+          pastEvents: Array.isArray(data?.pastEvents) ? data.pastEvents : [],
+        });
+      } catch (error) {
+        console.error("Failed to load participant dashboard", error);
+      }
+    };
+    fetchDashboard();
   }, []);
 
   const { profile, upcomingEvents, pastEvents } = participantData;

@@ -16,12 +16,11 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.exceptions import TokenError
 import qrcode
 import io
 import base64
 import secrets
-import math
-from django.conf import settings
 from .serializers import (
     StudentRegistrationSerializer,
     TeacherRegistrationSerializer,
@@ -47,6 +46,7 @@ from .models import (
     Student, Teacher, Management, StudentCourse, TaughtCourse, Course, Class,
     UpdateAttendanceRequest, AttendanceSession, AttendanceRecord
 )
+from events.models import EventParticipant, EventAdvisor
 
 
 # ============ Unified Frontend-Compatible Endpoints ============
@@ -68,6 +68,11 @@ class UnifiedLoginView(APIView):
         'teacher': (Teacher, 'teacher'),
         'admin': (Management, 'admin'),
         'management': (Management, 'admin'),
+        'orgadmin': (Management, 'admin'),
+        'advisor': (EventAdvisor, 'advisor'),
+        'eventadmin': (EventAdvisor, 'advisor'),
+        'event_admin': (EventAdvisor, 'advisor'),
+        'participant': (EventParticipant, 'participant'),
     }
 
     def post(self, request):
@@ -99,8 +104,8 @@ class UnifiedLoginView(APIView):
             profile = ModelClass.objects.get(user=user)
         except ModelClass.DoesNotExist:
             return Response(
-                {'error': f'No {role} profile found for this account'},
-                status=status.HTTP_404_NOT_FOUND
+                {'error': 'Invalid credentials or role'},
+                status=status.HTTP_401_UNAUTHORIZED
             )
 
         refresh = RefreshToken.for_user(user)
@@ -125,6 +130,26 @@ class UnifiedLoginView(APIView):
                 'name': profile.teacher_name,
                 'email': profile.email,
             }
+        elif user_type == 'advisor':
+            response_data = {
+                'message': 'Login successful',
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'user_type': 'advisor',
+                'id': profile.id,
+                'name': profile.name,
+                'email': user.email,
+            }
+        elif user_type == 'participant':
+            response_data = {
+                'message': 'Login successful',
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'user_type': 'participant',
+                'id': profile.id,
+                'name': profile.display_name or user.username,
+                'email': user.email,
+            }
         else:  # admin / management
             response_data = {
                 'message': 'Login successful',
@@ -145,13 +170,13 @@ class UnifiedSignupView(APIView):
 
     POST /api/signup
     Request body: {
-      "role": "student|teacher|admin|management",
+      "role": "student|teacher|admin|management|advisor|eventadmin|participant",
       "name": "...",
       "email": "...",
       "password": "...",
             // Student extras: "id" (used as student_rollNo), "year", "program" (dept), "section"
             // Teacher extras: "id" (used as teacher_rollNo)
-      // Admin extras: "university", "department"
+      // Event admin extras: "name"
     }
 
     The frontend (SignUp.jsx and admin ManageStudents/ManageTeacher) sends all
@@ -171,9 +196,9 @@ class UnifiedSignupView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if role not in ('student', 'teacher', 'admin', 'management'):
+        if role not in ('student', 'teacher', 'admin', 'management', 'orgadmin', 'advisor', 'eventadmin', 'event_admin', 'participant'):
             return Response(
-                {'error': f'Invalid role: {role}. Must be one of: student, teacher, admin, management'},
+                {'error': 'Invalid role. Must be one of: student, teacher, admin, management, advisor, eventadmin, participant'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -198,6 +223,15 @@ class UnifiedSignupView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        try:
+            validate_password(password)
+        except ValidationError as exc:
+            messages = list(exc.messages) if hasattr(exc, 'messages') else ['Password does not meet policy requirements']
+            return Response(
+                {'error': messages[0]},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         user = User.objects.create_user(username=email, email=email, password=password)
 
         try:
@@ -205,7 +239,11 @@ class UnifiedSignupView(APIView):
                 return self._register_student(request, user, name, email, management)
             elif role == 'teacher':
                 return self._register_teacher(request, user, name, email, management)
-            else:  # admin or management
+            elif role in ('advisor', 'eventadmin', 'event_admin'):
+                return self._register_event_advisor(request, user, name, email)
+            elif role == 'participant':
+                return self._register_participant(request, user, name, email)
+            else:  # admin / management / orgadmin
                 return self._register_management(request, user, name, email)
         except Exception as e:
             user.delete()
@@ -583,6 +621,37 @@ class UnifiedSignupView(APIView):
             'email': management.email,
         }, status=status.HTTP_201_CREATED)
 
+    def _register_event_advisor(self, request, user, name, email):
+        advisor_name = name or email.split('@')[0]
+
+        advisor = EventAdvisor.objects.create(
+            user=user,
+            name=advisor_name,
+        )
+        return Response({
+            'message': 'Event admin registered successfully',
+            'user_type': 'advisor',
+            'advisor_id': advisor.id,
+            'name': advisor.name,
+            'email': email,
+        }, status=status.HTTP_201_CREATED)
+
+    def _register_participant(self, request, user, name, email):
+        participant_name = name or email.split('@')[0]
+        participant = EventParticipant.objects.create(
+            user=user,
+            display_name=participant_name,
+            phone=(request.data.get('phone') or '').strip(),
+            age=request.data.get('age') if request.data.get('age') is not None else None,
+        )
+        return Response({
+            'message': 'Participant registered successfully',
+            'user_type': 'participant',
+            'participant_id': participant.id,
+            'name': participant.display_name,
+            'email': email,
+        }, status=status.HTTP_201_CREATED)
+
 
 class UserDetailsView(APIView):
     """
@@ -652,6 +721,22 @@ class UserLogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        return Response({'message': 'Logged out successfully'}, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        refresh_token = request.data.get('refresh')
+        if refresh_token:
+            try:
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+            except TokenError:
+                return Response(
+                    {'error': 'Invalid refresh token'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            except Exception:
+                # Token blacklist app may not be enabled; keep logout idempotent.
+                pass
         return Response({'message': 'Logged out successfully'}, status=status.HTTP_200_OK)
 
 
@@ -961,25 +1046,16 @@ class TeacherViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = self.queryset.all()
 
-        # Scope results to the request user's management when possible.
-        # - Management users: see their management's teachers
-        # - Teacher users: see teachers in their management
-        # - Student users: see teachers in their management
-        # If no management can be inferred, keep queryset unscoped (legacy behavior).
-        scope_management = None
-        if not self.request.user.is_superuser:
-            scope_management = _get_management_for_user(self.request.user)
-            if not scope_management:
-                teacher_user = _get_teacher_for_user(self.request.user)
-                if teacher_user and teacher_user.management_id:
-                    scope_management = teacher_user.management
-            if not scope_management:
-                student_user = _get_student_for_user(self.request.user)
-                if student_user and student_user.management_id:
-                    scope_management = student_user.management
+        if self.request.user.is_superuser:
+            management = None
+        else:
+            management = _get_management_for_user(self.request.user)
+            if not management:
+                return queryset.none()
 
-        if scope_management:
-            queryset = queryset.filter(management=scope_management)
+        # Scope to the logged-in management's teachers
+        if management:
+            queryset = queryset.filter(management=management)
 
         # Filter by year or program – stored as comma-separated strings, match whole values only
         # Accept both singular (?year=) and plural (?years=) param names
@@ -1483,54 +1559,32 @@ class UpdateAttendanceRequestViewSet(viewsets.ModelViewSet):
         student_roll_no = self.request.query_params.get('student_rollNo') or self.request.query_params.get('student')
         course_id = self.request.query_params.get('course')
         request_status = self.request.query_params.get('status')
-        include_processed = str(self.request.query_params.get('include_processed', '')).lower() in {'1', 'true', 'yes'}
         if teacher_roll_no:
             queryset = queryset.filter(teacher__teacher_rollNo=teacher_roll_no)
         if student_roll_no:
             queryset = queryset.filter(student__student_rollNo=student_roll_no)
         if course_id:
             queryset = queryset.filter(course_id=course_id)
-
-        # Default behavior: only show pending requests unless the client explicitly
-        # requests a status filter or asks to include processed items.
-        if request_status and request_status != 'all':
+        if request_status:
             queryset = queryset.filter(status=request_status)
-        elif not include_processed:
-            queryset = queryset.filter(status='pending')
         return queryset
 
     def perform_create(self, serializer):
-        """Auto-set management from the teacher's management on create."""
+        """Auto-set management from the teacher's management on create"""
         teacher = serializer.validated_data.get('teacher')
         management = teacher.management if teacher else None
-
-        if self.request.user.is_superuser:
-            serializer.save(management=management)
-            return
-
-        current_management = _get_management_for_user(self.request.user)
-        current_teacher = _get_teacher_for_user(self.request.user)
-
-        # Teachers can create requests for themselves.
-        if current_teacher:
-            if not teacher:
-                teacher = current_teacher
-                management = teacher.management
-            if teacher.teacher_id != current_teacher.teacher_id:
-                raise DRFValidationError({'error': 'Teachers can only create attendance requests for themselves'})
-            serializer.save(management=management)
-            return
-
-        # Management users can create requests for teachers within their management.
-        if not current_management:
-            raise DRFValidationError({'error': 'Only management/teacher users can create attendance requests'})
-        if not management or management.Management_id != current_management.Management_id:
-            raise DRFValidationError({'error': 'Teacher does not belong to your management'})
+        if not self.request.user.is_superuser:
+            current_management = _get_management_for_user(self.request.user)
+            if not current_management:
+                raise DRFValidationError({'error': 'Only management users can create attendance requests'})
+            if not management or management.Management_id != current_management.Management_id:
+                raise DRFValidationError({'error': 'Teacher does not belong to your management'})
         serializer.save(management=management)
 
     def _process_request(self, request, pk, approve):
         """Helper method to approve or reject a request"""
         from django.utils import timezone
+        from django.http import Http404
 
         # Ensure non-management users get an explicit authorization error.
         try:
@@ -1541,13 +1595,13 @@ class UpdateAttendanceRequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        # Don't use self.get_object()/get_queryset() here because the list endpoint
-        # defaults to pending-only; approve/reject must still be able to load
-        # already-processed requests to return the proper 400 response.
         try:
-            attendance_request = UpdateAttendanceRequest.objects.get(pk=pk, management=management)
-        except UpdateAttendanceRequest.DoesNotExist:
-            return Response({'error': 'Update attendance request not found'}, status=status.HTTP_404_NOT_FOUND)
+            attendance_request = self.get_object()
+        except Http404:
+            return Response(
+                {'error': 'Update attendance request not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
         if attendance_request.status != 'pending':
             return Response(
@@ -1555,41 +1609,40 @@ class UpdateAttendanceRequestViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        with transaction.atomic():
-            if approve:
-                # Approve: Update the student's attendance in the StudentCourse
-                added_count = len([c.strip() for c in (attendance_request.classes_to_add or '').split(',') if c.strip()])
-                try:
-                    student_course = StudentCourse.objects.get(
-                        student=attendance_request.student,
-                        course=attendance_request.course,
-                        teacher=attendance_request.teacher
-                    )
-                    student_course.classes_attended_count = (student_course.classes_attended_count or 0) + added_count
-                    student_course.save(update_fields=['classes_attended_count'])
-                except StudentCourse.DoesNotExist:
-                    # Create new StudentCourse record if it doesn't exist
-                    StudentCourse.objects.create(
-                        student=attendance_request.student,
-                        course=attendance_request.course,
-                        teacher=attendance_request.teacher,
-                        classes_attended_count=added_count,
-                    )
-                attendance_request.status = 'approved'
-                message = 'Attendance request approved and attendance updated'
-            else:
-                attendance_request.status = 'rejected'
-                message = 'Attendance request rejected'
+        if approve:
+            # Approve: Update the student's attendance in the StudentCourse
+            added_count = len([c.strip() for c in (attendance_request.classes_to_add or '').split(',') if c.strip()])
+            try:
+                student_course = StudentCourse.objects.get(
+                    student=attendance_request.student,
+                    course=attendance_request.course,
+                    teacher=attendance_request.teacher
+                )
+                student_course.classes_attended_count = (student_course.classes_attended_count or 0) + added_count
+                student_course.save(update_fields=['classes_attended_count'])
+            except StudentCourse.DoesNotExist:
+                # Create new StudentCourse record if it doesn't exist
+                StudentCourse.objects.create(
+                    student=attendance_request.student,
+                    course=attendance_request.course,
+                    teacher=attendance_request.teacher,
+                    classes_attended_count=added_count,
+                )
+            attendance_request.status = 'approved'
+            message = 'Attendance request approved and attendance updated'
+        else:
+            attendance_request.status = 'rejected'
+            message = 'Attendance request rejected'
 
-            attendance_request.processed_at = timezone.now()
-            attendance_request.processed_by = management
+        attendance_request.processed_at = timezone.now()
+        attendance_request.processed_by = management
+        attendance_request.save()
 
-            # Return the processed state in the response, but remove it from the DB
-            # so it no longer appears anywhere after approval/rejection.
-            serializer_data = self.get_serializer(attendance_request).data
-            attendance_request.delete()
-
-        return Response({'message': message, 'request': serializer_data}, status=status.HTTP_200_OK)
+        serializer = self.get_serializer(attendance_request)
+        return Response({
+            'message': message,
+            'request': serializer.data
+        }, status=status.HTTP_200_OK)
 
     def approve(self, request, pk=None):
         """Approve the attendance update request"""
@@ -1839,36 +1892,22 @@ class RFIDScanView(APIView):
     """
     permission_classes = [AllowAny]  # Allow hardware to scan without auth
 
-    def _try_mark_present_and_increment_once(self, record, session):
-        """Atomically mark present and increment attendance only once per session/student."""
-        require_rfid = getattr(settings, 'ATTENDANCE_REQUIRE_RFID', True)
-
-        if require_rfid:
-            complete_filter = Q(rfid_scanned=True, qr_scanned=True)
-        else:
-            complete_filter = Q(rfid_scanned=True) | Q(qr_scanned=True)
-
-        with transaction.atomic():
-            updated = AttendanceRecord.objects.filter(
-                pk=record.pk,
-                is_present=False,
-            ).filter(complete_filter).update(
-                is_present=True,
-                marked_present_at=timezone.now(),
-            )
-
-            # Only the first caller that flips is_present from False->True
-            # is allowed to increment StudentCourse.
-            if updated != 1:
-                return
-
+    def _mark_attendance_if_complete(self, record, session):
+        """
+        Helper method to mark attendance and update StudentCourse if both scans are complete.
+        """
+        if record.rfid_scanned and record.qr_scanned and not record.is_present:
+            record.is_present = True
+            record.marked_present_at = timezone.now()
+            
+            # Update StudentCourse attendance
             student_course, _ = StudentCourse.objects.get_or_create(
                 student=record.student,
                 course=session.course,
                 teacher=session.teacher,
                 defaults={'classes_attended_count': 0}
             )
-
+            
             slot_count = max(1, int(getattr(session, 'slot_count', 1) or 1))
             student_course.classes_attended_count = (student_course.classes_attended_count or 0) + slot_count
             if student_course.teacher_id is None:
@@ -1933,13 +1972,10 @@ class RFIDScanView(APIView):
         record.rfid_scanned = True
         record.rfid_scanned_at = timezone.now()
 
-        # Persist scan state before attempting to finalize attendance.
-        record.save(update_fields=['rfid_scanned', 'rfid_scanned_at'])
-
         # Check if both RFID and QR are scanned
-        self._try_mark_present_and_increment_once(record, session)
+        self._mark_attendance_if_complete(record, session)
 
-        record.refresh_from_db()
+        record.save()
 
         return Response({
             'message': 'RFID scanned successfully',
@@ -1958,46 +1994,22 @@ class QRScanView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
-    @staticmethod
-    def _haversine_meters(lat1, lon1, lat2, lon2):
-        """Compute great-circle distance between two points on Earth in meters."""
-        r = 6371000.0
-        phi1 = math.radians(lat1)
-        phi2 = math.radians(lat2)
-        d_phi = math.radians(lat2 - lat1)
-        d_lambda = math.radians(lon2 - lon1)
-        a = (math.sin(d_phi / 2) ** 2) + math.cos(phi1) * math.cos(phi2) * (math.sin(d_lambda / 2) ** 2)
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-        return r * c
-
-    def _try_mark_present_and_increment_once(self, record, session):
-        """Atomically mark present and increment attendance only once per session/student."""
-        require_rfid = getattr(settings, 'ATTENDANCE_REQUIRE_RFID', True)
-
-        if require_rfid:
-            complete_filter = Q(rfid_scanned=True, qr_scanned=True)
-        else:
-            complete_filter = Q(rfid_scanned=True) | Q(qr_scanned=True)
-
-        with transaction.atomic():
-            updated = AttendanceRecord.objects.filter(
-                pk=record.pk,
-                is_present=False,
-            ).filter(complete_filter).update(
-                is_present=True,
-                marked_present_at=timezone.now(),
-            )
-
-            if updated != 1:
-                return
-
+    def _mark_attendance_if_complete(self, record, session):
+        """
+        Helper method to mark attendance and update StudentCourse if both scans are complete.
+        """
+        if record.rfid_scanned and record.qr_scanned and not record.is_present:
+            record.is_present = True
+            record.marked_present_at = timezone.now()
+            
+            # Update StudentCourse attendance
             student_course, _ = StudentCourse.objects.get_or_create(
                 student=record.student,
                 course=session.course,
                 teacher=session.teacher,
                 defaults={'classes_attended_count': 0}
             )
-
+            
             slot_count = max(1, int(getattr(session, 'slot_count', 1) or 1))
             student_course.classes_attended_count = (student_course.classes_attended_count or 0) + slot_count
             if student_course.teacher_id is None:
@@ -2013,8 +2025,6 @@ class QRScanView(APIView):
 
         qr_token = serializer.validated_data['qr_token']
         student_id = serializer.validated_data['student_id']
-        scan_lat = serializer.validated_data.get('latitude')
-        scan_lon = serializer.validated_data.get('longitude')
 
         # Get student
         try:
@@ -2041,29 +2051,6 @@ class QRScanView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Geo-fencing: if the session was started with a location, enforce that
-        # QR scans must happen within radius_meters of that location.
-        if session.latitude is not None and session.longitude is not None:
-            if scan_lat is None or scan_lon is None:
-                return Response(
-                    {'error': 'Location is required for QR scan', 'required_fields': ['latitude', 'longitude']},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            if not (-90 <= scan_lat <= 90) or not (-180 <= scan_lon <= 180):
-                return Response({'error': 'Invalid latitude/longitude'}, status=status.HTTP_400_BAD_REQUEST)
-
-            radius_meters = int(getattr(session, 'radius_meters', 50) or 50)
-            distance_meters = self._haversine_meters(scan_lat, scan_lon, session.latitude, session.longitude)
-            if distance_meters > radius_meters:
-                return Response(
-                    {
-                        'error': 'Outside allowed QR scan radius',
-                        'distance_meters': round(distance_meters, 2),
-                        'radius_meters': radius_meters,
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
         # Check if student is enrolled in this course/section/year
         if student.section != session.section or student.year != session.year:
             return Response(
@@ -2087,13 +2074,10 @@ class QRScanView(APIView):
         record.qr_scanned = True
         record.qr_scanned_at = timezone.now()
 
-        # Persist scan state before attempting to finalize attendance.
-        record.save(update_fields=['qr_scanned', 'qr_scanned_at'])
-
         # Check if both RFID and QR are scanned
-        self._try_mark_present_and_increment_once(record, session)
+        self._mark_attendance_if_complete(record, session)
 
-        record.refresh_from_db()
+        record.save()
 
         return Response({
             'message': 'QR code scanned successfully',
@@ -2113,12 +2097,22 @@ class StudentRegistrationView(generics.CreateAPIView):
     API endpoint for student registration
     """
     serializer_class = StudentRegistrationSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def create(self, request, *args, **kwargs):
+        management = Management.objects.filter(user=request.user).first()
+        if not management:
+            return Response(
+                {'error': 'Only management users can register students.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
             student = serializer.save()
+            if student.management_id is None:
+                student.management = management
+                student.save(update_fields=['management'])
             return Response({
                 'message': 'Student registered successfully',
                 'student_id': student.student_id,
@@ -2133,12 +2127,22 @@ class TeacherRegistrationView(generics.CreateAPIView):
     API endpoint for teacher registration
     """
     serializer_class = TeacherRegistrationSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def create(self, request, *args, **kwargs):
+        management = Management.objects.filter(user=request.user).first()
+        if not management:
+            return Response(
+                {'error': 'Only management users can register teachers.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
             teacher = serializer.save()
+            if teacher.management_id is None:
+                teacher.management = management
+                teacher.save(update_fields=['management'])
             return Response({
                 'message': 'Teacher registered successfully',
                 'teacher_id': teacher.teacher_id,

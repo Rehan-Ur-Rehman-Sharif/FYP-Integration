@@ -121,10 +121,6 @@ class AttendanceSession(models.Model):
     Model for attendance sessions started by teachers.
     Teachers can start/stop sessions for a specific course, section, and year.
     """
-    ATTENDANCE_TYPE_CHOICES = [
-        ('regular', 'Regular'),
-        ('compensatory', 'Compensatory'),
-    ]
     STATUS_CHOICES = [
         ('active', 'Active'),
         ('stopped', 'Stopped'),
@@ -135,11 +131,6 @@ class AttendanceSession(models.Model):
     section = models.CharField(max_length=10)  # e.g., A, B, C
     year = models.IntegerField()  # e.g., 1, 2, 3, 4
     slot_count = models.PositiveIntegerField(default=1)
-    attendance_type = models.CharField(max_length=20, choices=ATTENDANCE_TYPE_CHOICES, default='regular')
-    program = models.CharField(max_length=100, blank=True, default='')
-    latitude = models.FloatField(null=True, blank=True)
-    longitude = models.FloatField(null=True, blank=True)
-    radius_meters = models.PositiveIntegerField(default=50)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='active')
     qr_code_token = models.CharField(max_length=255, unique=True)  # Token for QR code validation
     started_at = models.DateTimeField(auto_now_add=True)

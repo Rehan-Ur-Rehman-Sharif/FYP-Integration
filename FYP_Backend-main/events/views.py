@@ -4,7 +4,8 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.shortcuts import get_object_or_404
+from django.conf import settings
+from django.shortcuts import get_object_or_404, redirect
 from django.db import models
 from django.utils import timezone
 
@@ -25,10 +26,30 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
         return getattr(obj, 'organiser', None) == request.user
 
 
+def _is_event_upcoming(event):
+    now = timezone.now()
+    today = now.date()
+    if event.event_date:
+        return event.event_date >= today
+    if event.start_time:
+        return event.start_time >= now
+    return False
+
+
+def _event_from_registration_token(token):
+    if not token:
+        return None
+    return Event.objects.filter(registration_link__iendswith=f"/{token}").first()
+
+
 class EventViewSet(viewsets.ModelViewSet):
     queryset = Event.objects.all()
     serializer_class = EventSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrReadOnly]
+
+    def get_queryset(self):
+        # Event admins should manage only their own events.
+        return Event.objects.filter(organiser=self.request.user).order_by('-created_at')
 
     def perform_create(self, serializer):
         serializer.save(organiser=self.request.user)
@@ -36,6 +57,11 @@ class EventViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def register(self, request, pk=None):
         event = self.get_object()
+        if not _is_event_upcoming(event):
+            return Response(
+                {'error': 'Registration is closed for this event'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         reg, created = Registration.objects.get_or_create(user=request.user, event=event)
         serializer = RegistrationSerializer(reg)
         return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
@@ -151,11 +177,115 @@ class ParticipantDashboardView(APIView):
     def get(self, request):
         now = timezone.now()
         today = now.date()
+        user = request.user
 
-        # Upcoming events: event_date or start_time in the future.
-        upcoming_events = Event.objects.filter(
-            models.Q(event_date__gte=today) | models.Q(start_time__gte=now)
-        ).order_by('event_date', 'start_time')
+        participant_profile = EventParticipant.objects.filter(user=user).first()
+        registrations = (
+            Registration.objects
+            .filter(user=user)
+            .select_related('event')
+            .prefetch_related('attendance')
+            .order_by('-registered_at')
+        )
 
-        serializer = EventSerializer(upcoming_events, many=True, context={'request': request})
-        return Response(serializer.data)
+        def _format_date(event):
+            if event.event_date:
+                return event.event_date.strftime('%m/%d/%Y')
+            if event.start_time:
+                return timezone.localtime(event.start_time).strftime('%m/%d/%Y')
+            return ''
+
+        def _event_payload(reg):
+            event = reg.event
+            attended = None
+            try:
+                attendance = reg.attendance
+                attended = bool(attendance.present)
+            except Attendance.DoesNotExist:
+                attended = bool(reg.attended) if reg.attended else None
+
+            return {
+                'id': f'evt-{event.id}',
+                'title': event.title,
+                'venue': event.venue or '',
+                'date': _format_date(event),
+                'description': event.description or '',
+                'attended': attended,
+            }
+
+        upcoming_events = []
+        past_events = []
+        for reg in registrations:
+            event = reg.event
+            is_upcoming = False
+            if event.event_date and event.event_date >= today:
+                is_upcoming = True
+            elif event.start_time and event.start_time >= now:
+                is_upcoming = True
+
+            payload = _event_payload(reg)
+            if is_upcoming:
+                upcoming_events.append(payload)
+            else:
+                past_events.append(payload)
+
+        return Response({
+            'profile': {
+                'name': (participant_profile.display_name if participant_profile else '') or user.get_full_name() or user.username,
+                'email': user.email or '',
+                'phone': participant_profile.phone if participant_profile else '',
+            },
+            'upcomingEvents': upcoming_events,
+            'pastEvents': past_events,
+        })
+
+
+class EventRegisterByLinkView(APIView):
+    """Resolve registration links and register authenticated participants."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, token):
+        event = _event_from_registration_token(token)
+        if not event:
+            return Response({'error': 'Invalid registration link'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({
+            'eventId': event.id,
+            'title': event.title,
+            'isUpcoming': _is_event_upcoming(event),
+        })
+
+    def post(self, request, token):
+        event = _event_from_registration_token(token)
+        if not event:
+            return Response({'error': 'Invalid registration link'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not request.user or not request.user.is_authenticated:
+            return Response({'error': 'Authentication required'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        participant = EventParticipant.objects.filter(user=request.user).first()
+        if not participant:
+            return Response(
+                {'error': 'Only participant accounts can register via event links'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if not _is_event_upcoming(event):
+            return Response(
+                {'error': 'Registration is closed for this event'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        registration, created = Registration.objects.get_or_create(user=request.user, event=event)
+        return Response({
+            'message': 'Registered successfully' if created else 'Already registered for this event',
+            'eventId': event.id,
+            'registrationId': registration.id,
+            'alreadyRegistered': not created,
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+def event_register_redirect(request, token):
+    """Handle clicked event registration links by redirecting to frontend login."""
+    frontend_base = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:5173').rstrip('/')
+    return redirect(f"{frontend_base}/login?eventToken={token}")

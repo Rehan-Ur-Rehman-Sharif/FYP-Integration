@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import axios from "../../utils/axiosInstance";
 
 const Admins = ({ data = [] }) => {
-  const [admins, setAdmins] = useState(data);
+  const [admins, setAdmins] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [showModal, setShowModal] = useState(false);
 
@@ -23,63 +24,100 @@ const Admins = ({ data = [] }) => {
     status: "active",
   });
 
-  const filteredAdmins = admins.filter(
-    (admin) =>
-      admin.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      admin.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredAdmins = admins.filter((admin) => {
+    const orgName = (admin.name || "").toLowerCase();
+    const email = (admin.email || "").toLowerCase();
+    const term = searchTerm.toLowerCase();
+    return orgName.includes(term) || email.includes(term);
+  });
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
+  const normalizeList = (payload) => {
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.results)) return payload.results;
+    return [];
+  };
+
+  const fetchAdmins = async () => {
+    try {
+      const { data: response } = await axios.get("/api/organization-admins/");
+      setAdmins(normalizeList(response));
+    } catch (error) {
+      console.error("Failed to fetch organization admins:", error);
+      setAdmins([]);
+    }
+  };
+
+  useEffect(() => {
+    fetchAdmins();
+  }, []);
+
   // ✅ CREATE ADMIN
-  const handleCreateAdmin = () => {
+  const handleCreateAdmin = async () => {
     if (!formData.name || !formData.email) return;
 
-    const newAdmin = {
-      id: Date.now(),
-      name: formData.name,
-      email: formData.email,
-      status: formData.status,
-      rfid: formData.rfid
-        ? formData.rfid.split(",").map((r) => r.trim())
-        : [],
-    };
+    try {
+      const payload = {
+        name: formData.name,
+        organization: formData.organization,
+        email: formData.email,
+        status: formData.status,
+      };
+      const { data: created } = await axios.post("/api/organization-admins/", payload);
+      setAdmins((prev) => [created, ...prev]);
+      setShowModal(false);
 
-    setAdmins([newAdmin, ...admins]);
-    setShowModal(false);
-
-    setFormData({
-      name: "",
-      email: "",
-      organization: "",
-      department: "",
-      status: "active",
-      rfid: "",
-    });
+      setFormData({
+        name: "",
+        email: "",
+        organization: "",
+        department: "",
+        status: "active",
+        rfid: "",
+      });
+    } catch (error) {
+      console.error("Failed to create organization admin:", error);
+      alert("Could not create admin. Please verify input and try again.");
+    }
   };
 
   // ✅ DELETE
-  const handleDelete = (id) => {
-    const updated = admins.filter((a) => a.id !== id);
-    setAdmins(updated);
+  const handleDelete = async (id) => {
+    try {
+      await axios.delete(`/api/organization-admins/${id}/`);
+      setAdmins((prev) => prev.filter((a) => a.id !== id));
+    } catch (error) {
+      console.error("Failed to delete organization admin:", error);
+      alert("Could not delete admin. Please try again.");
+    }
   };
 
   // ✅ UPDATE
-  const handleUpdate = () => {
-    const updatedAdmins = admins.map((a) =>
-      a.id === selectedAdmin.id
-        ? {
-            ...a,
-            rfid: editData.rfid.split(",").map((r) => r.trim()),
-            status: editData.status,
-          }
-        : a
-    );
+  const handleUpdate = async () => {
+    if (!selectedAdmin) return;
 
-    setAdmins(updatedAdmins);
-    setEditModal(false);
+    try {
+      const payload = {
+        status: editData.status,
+        rfid: editData.rfid,
+      };
+      const { data: updated } = await axios.patch(
+        `/api/organization-admins/${selectedAdmin.id}/`,
+        payload
+      );
+
+      setAdmins((prev) =>
+        prev.map((a) => (a.id === selectedAdmin.id ? updated : a))
+      );
+      setSelectedAdmin(updated);
+      setEditModal(false);
+    } catch (error) {
+      console.error("Failed to update organization admin:", error);
+      alert("Could not update admin. Ensure all RFID values are valid.");
+    }
   };
 
   return (
@@ -156,7 +194,7 @@ const Admins = ({ data = [] }) => {
                   onClick={() => {
                     setSelectedAdmin(admin);
                     setEditData({
-                      rfid: admin.rfid.join(", "),
+                      rfid: (admin.rfid || []).join(", "),
                       status: admin.status,
                     });
                     setEditModal(true);

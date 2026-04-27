@@ -17,7 +17,6 @@ const Signup = () => {
     password: "",
     confirmPassword: "",
     organization: "",
-    society: "",
   });
 
   const handleChange = (e) => {
@@ -33,7 +32,8 @@ const Signup = () => {
       return;
     }
 
-    if (role === "admin") {
+    const isAdmin = role === "admin";
+    if (isAdmin) {
       if (!form.organization) {
         setError("Please enter the organization name.");
         return;
@@ -42,49 +42,45 @@ const Signup = () => {
         setError("Passwords do not match.");
         return;
       }
+    }
 
-      const payload = {
-        Management_name: form.organization,
-        email: form.email,
-        password: form.password,
-        password2: form.confirmPassword,
-      };
-
-      try {
-        setLoading(true);
-        await axios.post("/api/auth/register/management/", payload);
-
-        alert("Organization Admin registered successfully!");
-        navigate("/login");
-      } catch (err) {
-        const result = err.response?.data;
-        if (result) {
-          const messages = Object.values(result).flat().join(" ");
-          setError(messages || "Registration failed. Please try again.");
-        } else {
-          setError("Network error. Please check your connection and try again.");
-        }
-      } finally {
-        setLoading(false);
-      }
+    if (role === "eventAdmin" && !form.name) {
+      setError("Please enter event admin name.");
       return;
     }
 
-    // Existing localStorage logic for other roles
-    const newUser = {
-      role,
-      ...form,
-      createdAt: new Date().toISOString(),
+    if (role === "participant" && !form.name) {
+      setError("Please enter your name.");
+      return;
+    }
+
+    const payload = {
+      role: isAdmin ? "admin" : role === "eventAdmin" ? "advisor" : "participant",
+      name:
+        role === "admin"
+          ? form.organization
+          : form.name,
+      email: form.email,
+      password: form.password,
+      organization: form.organization || "",
     };
 
-    const key =
-      role === "eventAdmin" ? "eventAdmins" : "participants";
-
-    const existing = JSON.parse(localStorage.getItem(key)) || [];
-    existing.push(newUser);
-    localStorage.setItem(key, JSON.stringify(existing));
-
-    alert("Signup successful!");
+    try {
+      setLoading(true);
+      await axios.post("/api/signup", payload);
+      alert("Signup successful!");
+      window.location.assign("/login");
+    } catch (err) {
+      const result = err.response?.data;
+      if (result) {
+        const messages = Object.values(result).flat().join(" ");
+        setError(messages || "Registration failed. Please try again.");
+      } else {
+        setError("Network error. Please check your connection and try again.");
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -147,9 +143,9 @@ const Signup = () => {
 
             {role === "eventAdmin" && (
               <input
-                name="society"
-                placeholder="Society Name"
-                value={form.society}
+                name="name"
+                placeholder="Name"
+                value={form.name}
                 onChange={handleChange}
               />
             )}

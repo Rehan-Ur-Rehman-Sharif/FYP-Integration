@@ -6,6 +6,8 @@ import { UserPlus } from "lucide-react";
 import { Link } from "lucide-react";
 
 export default function EventCard({ event, onView, onCopyLink }) {
+  const formattedDate = event.date ? new Date(event.date).toLocaleDateString() : "N/A";
+  const isUpcoming = Boolean(event.isUpcoming);
   return (
     <div className="event-card" role="article">
       <h3>{event.title}</h3>
@@ -13,16 +15,22 @@ export default function EventCard({ event, onView, onCopyLink }) {
       <div className="meta">
         <div className="new"> 
 <MapPin size={20} color="#2C5F9E" strokeWidth={2.5} />{event.venue}</div>
-        <div  className="new"><Calendar size={20} color="#2C5F9E" strokeWidth={2.5} /> {new Date(event.date).toLocaleDateString()}</div>
+        <div  className="new"><Calendar size={20} color="#2C5F9E" strokeWidth={2.5} /> {formattedDate}</div>
         <div className="new"><UserPlus size={20} color="#2C5F9E" /> {event.registeredCount} registered</div>
       </div>
 
       <div className="event-desc">{event.description}</div>
 
       <div className="card-actions">
-      <button className="small-btn" onClick={() => onCopyLink(event)}>  
-          <Link size={22} color="#2C5F9E" strokeWidth={2.5} /> Copy Link
-        </button>
+        {isUpcoming ? (
+          <button className="small-btn" onClick={() => onCopyLink(event)}>
+            <Link size={22} color="#2C5F9E" strokeWidth={2.5} /> Copy Link
+          </button>
+        ) : (
+          <button className="small-btn" disabled title="Past events cannot be shared">
+            Event Closed
+          </button>
+        )}
        
 
         <button className="small-btn primary" onClick={() => onView(event)}>

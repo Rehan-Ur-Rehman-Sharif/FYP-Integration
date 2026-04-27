@@ -14,27 +14,21 @@ export default function CreateEventModal({ onClose, onCreate }) {
 
   const handleChange = (e) => setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!form.title || !form.date) {
       alert("Please enter event title and date.");
       return;
     }
-    const newEvent = {
-      id: "evt-" + Date.now(),
+    const payload = {
       title: form.title,
       venue: form.venue,
       date: form.date,
       regStart: form.regStart,
       regEnd: form.regEnd,
       description: form.description,
-      participants: [],
-      attendance: [],
-      registeredCount: 0,
-      qrImage: "/mnt/data/b05d9fb1-ce8a-4eb6-9e96-80f02d00d93f.png",
-      registrationLink: "https://example.com/events/" + Date.now()
+      geo: form.geo,
     };
-    onCreate(newEvent);
-    onClose();
+    await onCreate(payload);
   };
 
   return (
