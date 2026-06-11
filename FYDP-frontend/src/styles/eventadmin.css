@@ -61,7 +61,16 @@ body { font-family: Inter, Arial, sans-serif; background: var(--bg); color: #222
 }
 .event-card h3 { margin:0 0 16px; color: #2c4d82; font-weight: 700; }
 .meta { color:var(--muted); font-size:14px; margin-bottom:12px; display:flex; flex-direction:column; gap:6px; }
-.event-desc { color:#444; margin-bottom:14px; line-height:1.45; }
+.event-desc {
+  color: #444;
+  margin-bottom: 14px;
+  line-height: 1.45;
+  height: 1.45em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
 
 /* card actions */
 .card-actions { display:flex; gap:10px; }

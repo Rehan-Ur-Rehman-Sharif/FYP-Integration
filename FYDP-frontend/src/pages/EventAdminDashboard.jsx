@@ -1,5 +1,6 @@
 // src/pages/EventAdminDashboard.jsx
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import EventCard from "../components/events/EventCard";
 import CreateEventModal from "../components/events/CreateEventModal";
 import EventModal from "../components/events/EventModal";
@@ -7,25 +8,83 @@ import "../styles/eventAdmin.css";
 import { Calendar } from "lucide-react";
 import axiosInstance from "../utils/axiosInstance";
 
+const resolveEventPk = (id) => {
+  if (id === null || id === undefined) return null;
+  const text = String(id).trim();
+  if (!text) return null;
+  if (text.startsWith("evt-")) return text.slice(4);
+  return text;
+};
 
 export default function EventAdminDashboard() {
+  const navigate = useNavigate();
   const [events, setEvents] = useState([]);
   const [showCreate, setShowCreate] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
+  const [error, setError] = useState(null);
 
   const fetchEvents = async () => {
     try {
       const { data } = await axiosInstance.get("/api/events/events/");
       const list = Array.isArray(data) ? data : data?.results || [];
       setEvents(list);
-    } catch (error) {
-      console.error("Failed to fetch events", error);
+      setError(null);
+    } catch (err) {
+      console.error("Failed to fetch events", err);
+      const errMsg = err.response?.data 
+        ? Object.values(err.response.data).flat().join(" ") 
+        : err.message;
+      setError(errMsg || "Failed to load events");
+      setEvents([]);
     }
   };
 
   useEffect(() => {
+    const stored = localStorage.getItem("currentUser");
+    if (!stored) {
+      navigate("/login");
+      return;
+    }
+
+    try {
+      const currentUser = JSON.parse(stored);
+      if (currentUser.role !== "advisor") {
+        navigate("/login");
+        return;
+      }
+    } catch (e) {
+      localStorage.removeItem("currentUser");
+      navigate("/login");
+      return;
+    }
+
     fetchEvents();
-  }, []);
+  }, [navigate]);
+
+  useEffect(() => {
+    const onAuthChange = () => {
+      const stored = localStorage.getItem("currentUser");
+      if (!stored) {
+        navigate("/login");
+        return;
+      }
+      try {
+        const currentUser = JSON.parse(stored);
+        if (currentUser.role !== "advisor") {
+          navigate("/login");
+          return;
+        }
+      } catch (e) {
+        localStorage.removeItem("currentUser");
+        navigate("/login");
+        return;
+      }
+      fetchEvents();
+    };
+
+    window.addEventListener("storage", onAuthChange);
+    return () => window.removeEventListener("storage", onAuthChange);
+  }, [navigate]);
 
   const handleCreate = async (payload) => {
     try {
@@ -42,6 +101,38 @@ export default function EventAdminDashboard() {
 
   const handleView = (ev) => setSelectedEvent(ev);
   const handleCloseModal = () => setSelectedEvent(null);
+
+  const handleDelete = async (eventId) => {
+    const pk = resolveEventPk(eventId);
+    if (!pk) {
+      alert("Invalid event id. Refresh the page and try again.");
+      return;
+    }
+
+    const confirmed = window.confirm("Are you sure you want to delete this event? This will also delete all registrations and attendance records.");
+    if (!confirmed) return;
+
+    try {
+      await axiosInstance.delete(`/api/events/events/${pk}/`);
+      setEvents((prev) => prev.filter((ev) => resolveEventPk(ev.id) !== pk));
+      if (selectedEvent && resolveEventPk(selectedEvent.id) === pk) {
+        setSelectedEvent(null);
+      }
+      alert("Event deleted successfully.");
+    } catch (error) {
+      const data = error?.response?.data;
+      let message = "Failed to delete event.";
+      if (typeof data === "string") {
+        message = data;
+      } else if (data?.detail) {
+        message = data.detail;
+      } else if (data) {
+        message = Object.values(data).flat().join(" ");
+      }
+      alert(message);
+      await fetchEvents();
+    }
+  };
 
   const handleCopyLink = (ev) => {
     if (!ev.isUpcoming) {
@@ -100,13 +191,25 @@ export default function EventAdminDashboard() {
           </div>
         </div>
 
+        {error && (
+          <div style={{ padding: "20px", color: "red", textAlign: "center" }}>
+            {error}
+          </div>
+        )}
+
         <div className="card-grid">
+          {events.length === 0 && !error && (
+            <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: "40px", color: "#6b7c93" }}>
+              No events found. Create your first event to get started.
+            </div>
+          )}
           {events.map((ev) => (
             <EventCard
               key={ev.id}
               event={ev}
               onView={handleView}
               onCopyLink={handleCopyLink}
+              onDelete={handleDelete}
             />
           ))}
         </div>

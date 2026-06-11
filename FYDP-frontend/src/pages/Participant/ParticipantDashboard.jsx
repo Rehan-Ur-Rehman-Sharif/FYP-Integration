@@ -228,6 +228,7 @@ const ParticipantDashboard = () => {
   const [registerFaceContext, setRegisterFaceContext] = useState(null);
   const [registeringFace, setRegisteringFace] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [participantData, setParticipantData] = useState({
     profile: { name: "", email: "" },
     upcomingEvents: [],
@@ -236,8 +237,11 @@ const ParticipantDashboard = () => {
   const html5QrRef = useRef(null);
 
   const fetchDashboard = async () => {
+    setIsRefreshing(true);
     try {
-      const { data } = await axiosInstance.get("/api/events/participants/dashboard/");
+      const { data } = await axiosInstance.get("/api/events/participants/dashboard/", {
+        params: { _t: Date.now() }
+      });
       setParticipantData({
         profile: data?.profile || { name: "", email: "" },
         upcomingEvents: Array.isArray(data?.upcomingEvents) ? data.upcomingEvents : [],
@@ -245,11 +249,22 @@ const ParticipantDashboard = () => {
       });
     } catch (error) {
       console.error("Failed to load participant dashboard", error);
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
   useEffect(() => {
     fetchDashboard();
+
+    // Auto-refresh when user focuses/switches back to this tab
+    const handleFocus = () => {
+      fetchDashboard();
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+    };
   }, []);
 
   useEffect(() => {
@@ -265,7 +280,12 @@ const ParticipantDashboard = () => {
           token: pendingToken,
           title: data?.title || "Scanned Event",
         });
-      } catch {
+      } catch (err) {
+        console.error("Failed to load pending attendance context", err);
+        const errMsg = err.response?.data
+          ? (typeof err.response.data === "string" ? err.response.data : Object.values(err.response.data).flat().join(" "))
+          : err.message;
+        alert(`Failed to load event attendance: ${errMsg || "Unknown error"}`);
         localStorage.removeItem("pendingAttendanceToken");
       }
     };
@@ -282,12 +302,22 @@ const ParticipantDashboard = () => {
         const { data } = await axiosInstance.get(
           `/api/events/register-by-link/${encodeURIComponent(pendingToken)}/`
         );
+        if (data?.alreadyRegistered) {
+          alert(`You are already registered for the event "${data.title || "this event"}".`);
+          localStorage.removeItem("pendingFaceRegistration");
+          return;
+        }
         setRegisterFaceContext({
           token: pendingToken,
           eventId: data?.eventId,
           title: data?.title || "Event Registration",
         });
-      } catch {
+      } catch (err) {
+        console.error("Failed to load pending registration context", err);
+        const errMsg = err.response?.data
+          ? (typeof err.response.data === "string" ? err.response.data : Object.values(err.response.data).flat().join(" "))
+          : err.message;
+        alert(`Failed to load event registration: ${errMsg || "Unknown error"}`);
         localStorage.removeItem("pendingFaceRegistration");
       }
     };
@@ -387,6 +417,25 @@ const ParticipantDashboard = () => {
     }
   };
 
+  const cancelPendingRegistration = async (token) => {
+    if (!token) return;
+    try {
+      await axiosInstance.delete(
+        `/api/events/register-by-link/${encodeURIComponent(token)}/`
+      );
+    } catch {
+      // Ignore — may not exist yet if user cancelled before any partial registration.
+    }
+  };
+
+  const handleCancelFaceRegistration = async () => {
+    const token = registerFaceContext?.token;
+    await cancelPendingRegistration(token);
+    localStorage.removeItem("pendingFaceRegistration");
+    setRegisterFaceContext(null);
+    await fetchDashboard();
+  };
+
   const handleFaceRegisterSubmit = async (imageBlob) => {
     if (!registerFaceContext?.token) return;
     setRegisteringFace(true);
@@ -433,7 +482,17 @@ const ParticipantDashboard = () => {
       </aside>
 
       <main className="participant-main">
-        <div className="participant-header">Attendance Management System</div>
+        <div className="participant-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>Attendance Management System</span>
+          <button
+            onClick={fetchDashboard}
+            className={`participant-refresh-btn ${isRefreshing ? "spinning" : ""}`}
+            title="Refresh dashboard"
+            disabled={isRefreshing}
+          >
+            <RefreshCw size={18} />
+          </button>
+        </div>
 
         <div>
           <p className="participant-section-label">Upcoming Events</p>
@@ -507,10 +566,7 @@ const ParticipantDashboard = () => {
       {registerFaceContext && (
         <FaceVerifyModal
           eventTitle={registerFaceContext.title}
-          onClose={() => {
-            localStorage.removeItem("pendingFaceRegistration");
-            setRegisterFaceContext(null);
-          }}
+          onClose={handleCancelFaceRegistration}
           onSubmit={handleFaceRegisterSubmit}
           submitting={registeringFace}
           isRegistration={true}

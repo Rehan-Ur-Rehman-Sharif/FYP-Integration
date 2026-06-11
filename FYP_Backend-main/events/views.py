@@ -15,7 +15,6 @@ import json
 import requests
 
 from .models import Event, Registration, Attendance, EventParticipant
-from core.models import UserFaceEmbedding
 from core.views import register_face_with_cv_module, FaceRegistrationServiceError
 from .serializers import (
     EventSerializer,
@@ -46,11 +45,16 @@ def _is_event_upcoming(event):
 def _event_from_registration_token(token):
     if not token:
         return None
-    # New token field first, then legacy URL field
+    token = token.strip().strip('/')
+    # New token field first
     event = Event.objects.filter(registration_token=token).first()
     if event:
         return event
-    return Event.objects.filter(registration_link__iendswith=f"/{token}").first()
+    # Fallback to legacy fields, checking with/without trailing slash
+    event = Event.objects.filter(registration_link__icontains=f"/{token}").first()
+    if event:
+        return event
+    return None
 
 
 def _registration_has_face(registration):
@@ -61,19 +65,23 @@ def _registration_has_face(registration):
 def _event_from_attendance_token(token):
     if not token:
         return None
-    # New token field first, then legacy URL field
+    token = token.strip().strip('/')
+    # New token field first
     event = Event.objects.filter(attendance_token=token).first()
     if event:
         return event
-    return Event.objects.filter(attendance_qr_code_url__iendswith=f"/{token}").first()
+    # Fallback to legacy fields
+    event = Event.objects.filter(attendance_qr_code_url__icontains=f"/{token}").first()
+    if event:
+        return event
+    return None
 
 
-def _verify_face_for_user(user, uploaded_file):
+def _verify_face_for_user(user, uploaded_file, stored_embedding=None):
     if uploaded_file is None:
         return False, {'error': 'face_image file is required'}
 
-    profile = UserFaceEmbedding.objects.filter(user=user).first()
-    if not profile or not profile.embedding:
+    if not stored_embedding:
         return False, {'error': 'No registered face embedding found for this user'}
 
     verify_url = getattr(settings, 'CV_MODULE_VERIFY_URL', '').strip()
@@ -84,7 +92,7 @@ def _verify_face_for_user(user, uploaded_file):
     uploaded_file.seek(0)
     content_type = getattr(uploaded_file, 'content_type', None) or 'application/octet-stream'
     files = {'file': (uploaded_file.name, uploaded_file.read(), content_type)}
-    data = {'stored_embedding': json.dumps(profile.embedding)}
+    data = {'stored_embedding': json.dumps(stored_embedding)}
 
     try:
         cv_resp = requests.post(verify_url, files=files, data=data, timeout=timeout_seconds)
@@ -455,7 +463,7 @@ class EventAttendanceByLinkView(APIView):
             )
 
         face_image = request.FILES.get('face_image') or request.FILES.get('file')
-        is_match, verify_payload = _verify_face_for_user(request.user, face_image)
+        is_match, verify_payload = _verify_face_for_user(request.user, face_image, stored_embedding=registration.face_embedding)
         if not is_match:
             message = verify_payload.get('error') or 'Face does not match, please try again.'
             return Response(

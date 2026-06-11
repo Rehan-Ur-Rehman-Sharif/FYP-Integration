@@ -1,9 +1,15 @@
 import axios from "axios";
 
-const axiosInstance = axios.create();
+// Skip ngrok free-tier interstitial HTML on API calls (otherwise login shows raw HTML errors).
+const NGROK_SKIP_HEADER = "ngrok-skip-browser-warning";
+
+const axiosInstance = axios.create({
+  headers: { [NGROK_SKIP_HEADER]: "true" },
+});
 
 // Attach access token to every request automatically
 axiosInstance.interceptors.request.use((config) => {
+  config.headers[NGROK_SKIP_HEADER] = "true";
   try {
     const token = JSON.parse(localStorage.getItem("currentUser"))?.token;
     if (token) config.headers.Authorization = `Bearer ${token}`;

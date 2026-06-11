@@ -433,3 +433,37 @@ body {
 .pqr-submit-btn:hover {
   background-color: #245090;
 }
+
+.participant-refresh-btn {
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  color: #ffffff;
+  padding: 8px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.participant-refresh-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.participant-refresh-btn:active {
+  transform: scale(0.92);
+}
+
+.participant-refresh-btn.spinning svg {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
